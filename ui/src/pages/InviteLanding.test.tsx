@@ -153,7 +153,9 @@ describe("InviteLandingPage", () => {
     expect(container.textContent).toContain("Message from inviter");
     expect(container.querySelector('[data-testid="invite-inline-auth"]')).not.toBeNull();
     expect(localStorage.getItem("paperclip:pending-invite-token")).toBe("pcp_invite_test");
-    expect(container.querySelector('img[alt="Acme Robotics logo"]')).not.toBeNull();
+    const inviteLogo = container.querySelector('img[alt="Acme Robotics logo"]');
+    expect(inviteLogo).not.toBeNull();
+    expect(inviteLogo?.className).toContain("object-contain");
     expect(container.querySelector('input[name="name"]')).not.toBeNull();
 
     const nameInput = container.querySelector('input[name="name"]') as HTMLInputElement | null;

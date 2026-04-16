@@ -129,6 +129,28 @@ type AwaitingJoinApprovalPanelProps = {
   onboardingTextUrl?: string | null;
 };
 
+function InviteCompanyLogo({
+  companyDisplayName,
+  companyLogoUrl,
+  companyBrandColor,
+  className,
+}: {
+  companyDisplayName: string;
+  companyLogoUrl: string | null;
+  companyBrandColor: string | null;
+  className?: string;
+}) {
+  return (
+    <CompanyPatternIcon
+      companyName={companyDisplayName}
+      logoUrl={companyLogoUrl}
+      brandColor={companyBrandColor}
+      logoFit="contain"
+      className={className}
+    />
+  );
+}
+
 function AwaitingJoinApprovalPanel({
   companyDisplayName,
   companyLogoUrl,
@@ -145,10 +167,10 @@ function AwaitingJoinApprovalPanel({
     <div className="min-h-screen bg-zinc-950 px-6 py-12 text-zinc-100">
       <div className="mx-auto max-w-md border border-zinc-800 bg-zinc-950 p-6" data-testid="invite-pending-approval">
         <div className="flex items-center gap-3">
-          <CompanyPatternIcon
-            companyName={companyDisplayName}
-            logoUrl={companyLogoUrl}
-            brandColor={companyBrandColor}
+          <InviteCompanyLogo
+            companyDisplayName={companyDisplayName}
+            companyLogoUrl={companyLogoUrl}
+            companyBrandColor={companyBrandColor}
             className="h-12 w-12 border border-zinc-800 rounded-none"
           />
           <h1 className="text-lg font-semibold">Request to join {companyDisplayName}</h1>
@@ -486,10 +508,10 @@ export function InviteLandingPage() {
         <div className="min-h-screen bg-zinc-950 px-6 py-12 text-zinc-100">
           <div className="mx-auto max-w-md border border-zinc-800 bg-zinc-950 p-6">
             <div className="flex items-center gap-3">
-              <CompanyPatternIcon
-                companyName={companyDisplayName}
-                logoUrl={companyLogoUrl}
-                brandColor={companyBrandColor}
+              <InviteCompanyLogo
+                companyDisplayName={companyDisplayName}
+                companyLogoUrl={companyLogoUrl}
+                companyBrandColor={companyBrandColor}
                 className="h-12 w-12 border border-zinc-800 rounded-none"
               />
               <h1 className="text-lg font-semibold">You joined the company</h1>
@@ -521,10 +543,10 @@ export function InviteLandingPage() {
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
           <section className={`${panelClassName} space-y-6`}>
             <div className="flex items-start gap-4">
-              <CompanyPatternIcon
-                companyName={companyDisplayName}
-                logoUrl={companyLogoUrl}
-                brandColor={companyBrandColor}
+              <InviteCompanyLogo
+                companyDisplayName={companyDisplayName}
+                companyLogoUrl={companyLogoUrl}
+                companyBrandColor={companyBrandColor}
                 className="h-16 w-16 rounded-none border border-zinc-800"
               />
               <div className="min-w-0">
