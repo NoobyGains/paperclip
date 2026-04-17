@@ -7,6 +7,7 @@ import {
 } from "./mission.js";
 import {
   parseMissionFeaturesDocument,
+  parseMissionValidationReportDocument,
   parseMissionValidationContractDocument,
 } from "./mission-documents.js";
 import {
@@ -226,6 +227,31 @@ describe("mission finding and report schemas", () => {
     if (!result.success) {
       expect(result.error.issues.some((issue) => issue.message.includes("must reference"))).toBe(true);
     }
+  });
+
+  it("parses validation reports from structured markdown", () => {
+    const parsed = parseMissionValidationReportDocument(`
+- Round: 2
+- Validator role: scrutiny validator
+- Summary: One blocking finding found.
+
+### FINDING-MISSION-001: Required document missing
+
+- Severity: blocking
+- Assertion: VAL-MISSION-001
+- Evidence: API response omitted validation-contract; screenshot attached in issue comment
+- Repro steps: Initialize mission; list issue documents
+- Expected: validation-contract exists.
+- Actual: validation-contract is absent.
+- Suspected area: mission initialization
+- Recommended fix scope: Create the missing document idempotently.
+- Status: open
+`);
+
+    expect(parsed.round).toBe(2);
+    expect(parsed.validator_role).toBe("scrutiny_validator");
+    expect(parsed.findings[0]?.id).toBe("FINDING-MISSION-001");
+    expect(parsed.findings[0]?.evidence).toHaveLength(2);
   });
 });
 

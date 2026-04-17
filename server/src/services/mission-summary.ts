@@ -4,6 +4,7 @@ import {
   deriveIssueBackedMissionState,
   MISSION_REQUIRED_DOCUMENT_KEYS,
   parseMissionFeaturesDocument,
+  parseMissionValidationReportDocument,
   parseMissionValidationContractDocument,
   type Issue,
   type IssueBackedMissionSummary,
@@ -12,16 +13,26 @@ import {
   type IssueRelationIssueSummary,
   type MissionBlockedWorkItem,
   type MissionFeaturesDocument,
+  type MissionFindingProjection,
+  type MissionFindingSeverity,
+  type MissionFindingStatus,
   type MissionMilestoneProjection,
   type MissionRequiredDocumentKey,
   type MissionSummaryIssue,
+  type MissionValidationSummary,
 } from "@paperclipai/shared";
 import { notFound } from "../errors.js";
 import { documentService } from "./documents.js";
 import { issueService } from "./issues.js";
+import {
+  isMissionValidationReportKey,
+  parseMissionFindingWaivers,
+  validationReportRoundFromKey,
+} from "./mission-findings.js";
 
 const TERMINAL_ISSUE_STATUSES = new Set(["done", "cancelled"]);
 const ACTIVE_RUN_STATUSES = new Set(["queued", "running"]);
+const FINDING_STATUSES: MissionFindingStatus[] = ["open", "fix_created", "waived", "resolved"];
 
 type IssueRelations = {
   blockedBy: IssueRelationIssueSummary[];
@@ -35,6 +46,10 @@ function isTerminalIssue(issue: Pick<Issue, "status"> | IssueRelationIssueSummar
 function missionOriginKey(missionIssueId: string, issue: Pick<Issue, "originId">, kind: string) {
   const prefix = `${missionIssueId}:${kind}:`;
   return issue.originId?.startsWith(prefix) ? issue.originId.slice(prefix.length) : null;
+}
+
+function isGeneratedFixFeature(issue: Pick<Issue, "originKind" | "originId"> | MissionSummaryIssue) {
+  return issue.originKind === "mission_feature" && /:feature:fix:FINDING-[A-Z0-9][A-Z0-9-]*-[0-9]{3,}$/.test(issue.originId ?? "");
 }
 
 function validationMilestoneKey(originKey: string) {
@@ -88,6 +103,117 @@ function createMilestoneProjection(input: {
   };
 }
 
+function emptySeverityCounts(): Record<MissionFindingSeverity, number> {
+  return { blocking: 0, non_blocking: 0, suggestion: 0 };
+}
+
+function emptyStatusCounts(): Record<MissionFindingStatus, number> {
+  return { open: 0, fix_created: 0, waived: 0, resolved: 0 };
+}
+
+function buildValidationSummary(input: {
+  mission: Issue;
+  documents: IssueDocument[];
+  descendants: Issue[];
+  relationMap: Map<string, IssueRelations>;
+  documentErrors: IssueBackedMissionSummary["documentErrors"];
+}): MissionValidationSummary {
+  const summaryByIssueId = new Map<string, MissionSummaryIssue>();
+  for (const issue of input.descendants) {
+    const relations = input.relationMap.get(issue.id);
+    summaryByIssueId.set(issue.id, toSummaryIssue(issue, relations?.blockedBy ?? []));
+  }
+
+  const fixIssueByFindingId = new Map<string, MissionSummaryIssue>();
+  for (const issue of input.descendants) {
+    for (const findingId of /fix:(FINDING-[A-Z0-9][A-Z0-9-]*-[0-9]{3,})/.exec(issue.originId ?? "")?.slice(1) ?? []) {
+      const summaryIssue = summaryByIssueId.get(issue.id);
+      if (summaryIssue) fixIssueByFindingId.set(findingId, summaryIssue);
+    }
+  }
+
+  const decisionLog = input.documents.find((document) => document.key === "decision-log");
+  const waivers = parseMissionFindingWaivers(decisionLog?.body);
+  const reports: MissionValidationSummary["reports"] = [];
+  const findings: MissionFindingProjection[] = [];
+
+  for (const document of input.documents.filter((candidate) => isMissionValidationReportKey(candidate.key))) {
+    const round = validationReportRoundFromKey(document.key) ?? undefined;
+    try {
+      const report = parseMissionValidationReportDocument(document.body, { round });
+      reports.push({
+        ...report,
+        documentKey: document.key,
+        documentTitle: document.title ?? null,
+        updatedAt: document.updatedAt ?? null,
+      });
+      for (const finding of report.findings) {
+        const fixIssue = fixIssueByFindingId.get(finding.id) ?? null;
+        const waiver = waivers.get(finding.id) ?? null;
+        const computedStatus: MissionFindingStatus = waiver
+          ? "waived"
+          : fixIssue
+            ? fixIssue.status === "done"
+              ? "resolved"
+              : "fix_created"
+            : finding.status;
+        findings.push({
+          ...finding,
+          sourceReportKey: document.key,
+          sourceReportTitle: document.title ?? null,
+          round: report.round,
+          validator_role: report.validator_role,
+          computedStatus,
+          fixIssue,
+          waiver,
+        });
+      }
+    } catch (error) {
+      input.documentErrors.push({ key: document.key, message: documentErrorMessage(error) });
+    }
+  }
+
+  const bySeverity = emptySeverityCounts();
+  const byStatus = emptyStatusCounts();
+  const assertionMap = new Map<string, MissionValidationSummary["assertions"][number]>();
+  for (const finding of findings) {
+    bySeverity[finding.severity] += 1;
+    byStatus[finding.computedStatus] += 1;
+    if (finding.assertion_id) {
+      const existing = assertionMap.get(finding.assertion_id) ?? {
+        assertion_id: finding.assertion_id,
+        findingIds: [],
+        severity: emptySeverityCounts(),
+        statuses: emptyStatusCounts(),
+        evidence: [],
+      };
+      existing.findingIds.push(finding.id);
+      existing.severity[finding.severity] += 1;
+      existing.statuses[finding.computedStatus] += 1;
+      existing.evidence.push(...finding.evidence);
+      assertionMap.set(finding.assertion_id, existing);
+    }
+  }
+
+  for (const assertion of assertionMap.values()) {
+    assertion.evidence = [...new Set(assertion.evidence)];
+  }
+
+  return {
+    reports,
+    findings,
+    counts: {
+      total: findings.length,
+      bySeverity,
+      byStatus,
+    },
+    assertions: [...assertionMap.values()],
+    openBlockingFindingCount: findings.filter(
+      (finding) => finding.severity === "blocking" && finding.computedStatus === "open",
+    ).length,
+  };
+}
+
 function buildMilestones(input: {
   mission: Issue;
   descendants: Issue[];
@@ -98,6 +224,7 @@ function buildMilestones(input: {
   const milestoneByKey = new Map<string, MissionMilestoneProjection>();
   const milestoneKeyByIssueId = new Map<string, string>();
   const milestoneKeyByFeatureKey = new Map<string, string>();
+  const milestoneKeyByFixLoopIssueId = new Map<string, string>();
 
   for (const planned of featurePlan?.milestones ?? []) {
     const projection = createMilestoneProjection({
@@ -130,6 +257,11 @@ function buildMilestones(input: {
     milestoneKeyByIssueId.set(issue.id, key);
   }
 
+  for (const issue of descendants.filter((issue) => issue.originKind === "mission_fix_loop")) {
+    const key = missionOriginKey(mission.id, issue, "fix_loop") ?? null;
+    if (key) milestoneKeyByFixLoopIssueId.set(issue.id, key);
+  }
+
   function ensureUngrouped() {
     const key = "ungrouped";
     const existing = milestoneByKey.get(key);
@@ -156,6 +288,7 @@ function buildMilestones(input: {
       (featureKey ? milestoneKeyByFeatureKey.get(featureKey) : null) ??
       (validationKey ? validationMilestoneKey(validationKey) : null) ??
       fixLoopKey ??
+      (issue.parentId ? milestoneKeyByFixLoopIssueId.get(issue.parentId) : null) ??
       (issue.parentId ? milestoneKeyByIssueId.get(issue.parentId) : null);
 
     const milestone = milestoneKey ? milestoneByKey.get(milestoneKey) ?? ensureUngrouped() : ensureUngrouped();
@@ -189,6 +322,7 @@ function nextMissionAction(input: {
   documentErrorCount: number;
   blockers: MissionBlockedWorkItem[];
   activeWork: MissionSummaryIssue[];
+  validationSummary: MissionValidationSummary;
   hasGeneratedWork: boolean;
   hasFinalReport: boolean;
   allGeneratedWorkTerminal: boolean;
@@ -201,10 +335,16 @@ function nextMissionAction(input: {
   if (input.activeWork.some((issue) => issue.originKind === "mission_validation")) {
     return "Review active validation work and capture findings.";
   }
+  if (input.validationSummary.openBlockingFindingCount > 0) {
+    return "Create bounded fix issues for open blocking validation findings.";
+  }
+  if (input.validationSummary.counts.byStatus.open > 0) {
+    return "Triage open non-blocking validation findings or record waivers.";
+  }
   if (input.activeWork.some((issue) => issue.originKind === "mission_fix_loop")) {
     return "Triage validation findings and create bounded fix issues.";
   }
-  if (input.activeWork.some((issue) => issue.originKind === "mission_feature")) {
+  if (input.activeWork.some((issue) => issue.originKind === "mission_feature" && !isGeneratedFixFeature(issue))) {
     return "Continue active feature work and collect implementation evidence.";
   }
   if (!input.hasGeneratedWork) return "Decompose the mission into milestone and feature issues.";
@@ -217,6 +357,8 @@ export function buildIssueBackedMissionSummary(input: {
   documentSummaries: IssueDocumentSummary[];
   validationDocument: IssueDocument | null;
   featuresDocument: IssueDocument | null;
+  validationReportDocuments?: IssueDocument[];
+  decisionLogDocument?: IssueDocument | null;
   descendants: Issue[];
   relationMap: Map<string, IssueRelations>;
   runSummary: IssueBackedMissionSummary["runSummary"];
@@ -237,6 +379,11 @@ export function buildIssueBackedMissionSummary(input: {
   const missingDocuments = MISSION_REQUIRED_DOCUMENT_KEYS.filter((key) => !presentKeys.has(key));
   const documentErrors: IssueBackedMissionSummary["documentErrors"] = [];
   let featurePlan: MissionFeaturesDocument | null = null;
+  const documents = [
+    ...documentSummaries.filter((document): document is IssueDocument => "body" in document),
+    ...(input.validationReportDocuments ?? []),
+    ...(input.decisionLogDocument ? [input.decisionLogDocument] : []),
+  ];
 
   if (validationDocument) {
     try {
@@ -265,6 +412,13 @@ export function buildIssueBackedMissionSummary(input: {
       .filter((item) => item.issue.status === "blocked" || item.blockers.length > 0),
   );
   const milestones = buildMilestones({ mission, descendants, relationMap, featurePlan });
+  const validationSummary = buildValidationSummary({
+    mission,
+    documents,
+    descendants,
+    relationMap,
+    documentErrors,
+  });
   const hasGeneratedWork = descendants.some((issue) => issue.originKind?.startsWith("mission_"));
   const hasFinalReport = presentKeys.has("mission-final-report");
   const allGeneratedWorkTerminal =
@@ -272,10 +426,10 @@ export function buildIssueBackedMissionSummary(input: {
   const state = deriveIssueBackedMissionState({
     missionIssueStatus: mission.status,
     presentDocumentKeys: [...presentKeys],
-    hasActiveFeatureIssues: activeWork.some((issue) => issue.originKind === "mission_feature"),
+    hasActiveFeatureIssues: activeWork.some((issue) => issue.originKind === "mission_feature" && !isGeneratedFixFeature(issue)),
     hasActiveValidationIssues: activeWork.some((issue) => issue.originKind === "mission_validation"),
-    hasActiveFixIssues: activeWork.some((issue) => issue.originKind === "mission_fix_loop"),
-    hasBlockingFindings: blockers.length > 0,
+    hasActiveFixIssues: activeWork.some((issue) => issue.originKind === "mission_fix_loop" || isGeneratedFixFeature(issue)),
+    hasBlockingFindings: blockers.length > 0 || validationSummary.openBlockingFindingCount > 0,
   });
 
   return {
@@ -288,6 +442,7 @@ export function buildIssueBackedMissionSummary(input: {
     milestones,
     blockers,
     activeWork,
+    validationSummary,
     runSummary: input.runSummary,
     costSummary: input.costSummary,
     next_action: nextMissionAction({
@@ -295,6 +450,7 @@ export function buildIssueBackedMissionSummary(input: {
       documentErrorCount: documentErrors.length,
       blockers,
       activeWork,
+      validationSummary,
       hasGeneratedWork,
       hasFinalReport,
       allGeneratedWorkTerminal,

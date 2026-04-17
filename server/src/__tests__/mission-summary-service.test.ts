@@ -207,4 +207,83 @@ describe("buildIssueBackedMissionSummary", () => {
     expect(summary.milestones[0]?.key).toBe("MILESTONE-MISSION-001");
     expect(summary.next_action).toBe("Decompose the mission into milestone and feature issues.");
   });
+
+  it("summarizes validation findings with evidence and assertion mapping", () => {
+    const report = doc("validation-report-round-1", JSON.stringify({
+      round: 1,
+      validator_role: "scrutiny_validator",
+      summary: "Found one blocking issue.",
+      findings: [
+        {
+          id: "FINDING-MISSION-001",
+          severity: "blocking",
+          assertion_id: "VAL-MISSION-001",
+          title: "Summary omits blockers",
+          evidence: ["API response did not include blockers."],
+          repro_steps: ["Create blocked child issue.", "Fetch mission summary."],
+          expected: "The blocker appears in the summary.",
+          actual: "The blocker is absent.",
+          recommended_fix_scope: "Include blocker rows.",
+          status: "open",
+        },
+      ],
+    }));
+    const summary = summarize({
+      documents: [...requiredDocs(), report],
+    });
+
+    expect(summary.validationSummary.counts.bySeverity.blocking).toBe(1);
+    expect(summary.validationSummary.openBlockingFindingCount).toBe(1);
+    expect(summary.validationSummary.assertions[0]?.assertion_id).toBe("VAL-MISSION-001");
+    expect(summary.validationSummary.assertions[0]?.evidence).toEqual(["API response did not include blockers."]);
+    expect(summary.next_action).toBe("Create bounded fix issues for open blocking validation findings.");
+  });
+
+  it("reports validation report parser errors", () => {
+    const summary = summarize({
+      documents: [...requiredDocs(), doc("validation-report-round-1", JSON.stringify({ findings: [] }))],
+    });
+
+    expect(summary.documentErrors.some((error) => error.key === "validation-report-round-1")).toBe(true);
+  });
+
+  it("marks non-blocking findings as waived from the decision log", () => {
+    const report = doc("validation-report-round-1", JSON.stringify({
+      round: 1,
+      validator_role: "user_testing_validator",
+      summary: "Found one non-blocking issue.",
+      findings: [
+        {
+          id: "FINDING-MISSION-002",
+          severity: "non_blocking",
+          assertion_id: "VAL-MISSION-001",
+          title: "Copy could be clearer",
+          evidence: ["Screenshot attached in validation comment."],
+          repro_steps: ["Open the mission summary."],
+          expected: "Copy is clear.",
+          actual: "Copy is understandable but terse.",
+          status: "open",
+        },
+      ],
+    }));
+    const decisionLog = doc(
+      "decision-log",
+      [
+        "# Decision Log",
+        "",
+        "<!-- paperclip:mission-finding-waiver:FINDING-MISSION-002 -->",
+        "### Waived FINDING-MISSION-002",
+        "",
+        "- Rationale: Acceptable for MVP.",
+      ].join("\n"),
+    );
+
+    const summary = summarize({
+      documents: [...requiredDocs().filter((document) => document.key !== "decision-log"), decisionLog, report],
+    });
+
+    expect(summary.validationSummary.findings[0]?.computedStatus).toBe("waived");
+    expect(summary.validationSummary.counts.byStatus.waived).toBe(1);
+    expect(summary.validationSummary.findings[0]?.waiver?.rationale).toBe("Acceptable for MVP.");
+  });
 });

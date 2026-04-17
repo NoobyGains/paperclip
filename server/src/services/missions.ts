@@ -14,12 +14,16 @@ import {
 } from "@paperclipai/db";
 import {
   parseMissionFeaturesDocument,
+  parseMissionValidationReportDocument,
   parseMissionValidationContractDocument,
   type Issue,
+  type IssueDocument,
   type IssueOriginKind,
   type MissionDecomposedIssue,
   type MissionDecompositionResult,
   type MissionFeaturesDocument,
+  type MissionFinding,
+  type MissionWaiveFindingResult,
 } from "@paperclipai/shared";
 import { notFound, unprocessable } from "../errors.js";
 import { documentService } from "./documents.js";
@@ -29,6 +33,13 @@ import {
   queueIssueAssignmentWakeup,
   type IssueAssignmentWakeupDeps,
 } from "./issue-assignment-wakeup.js";
+import {
+  buildMissionFindingWaiverEntry,
+  isMissionValidationReportKey,
+  missionFixIssueOriginId,
+  parseMissionFindingWaivers,
+  validationReportRoundFromKey,
+} from "./mission-findings.js";
 
 const GENERATED_ORIGIN_KIND_BY_RESULT_KIND = {
   milestone: "mission_milestone",
@@ -90,6 +101,11 @@ export type MissionAdvanceResult = {
   wokenIssueIds: string[];
   commentId: string | null;
   details: Record<string, unknown>;
+};
+type MissionFixCreationResult = {
+  createdIssueIds: string[];
+  updatedIssueIds: string[];
+  skippedFindingIds: string[];
 };
 export type MissionAdvanceUnresolvedBlocker = {
   issueId: string;
@@ -189,6 +205,68 @@ function buildFixLoopDescription(input: {
     "",
     "Use this placeholder to anchor fix issues created from blocking validation findings.",
   ].join("\n");
+}
+
+function buildFindingFixDescription(input: {
+  mission: Pick<Issue, "id" | "identifier">;
+  finding: MissionFinding;
+  reportKey: string;
+  round: number;
+}) {
+  const { mission, finding, reportKey, round } = input;
+  return [
+    `Mission fix issue generated from ${issueReference(mission)}.`,
+    "",
+    `Finding: \`${finding.id}\``,
+    `Severity: \`${finding.severity}\``,
+    `Validation report: \`${reportKey}\``,
+    `Validation round: ${round}`,
+    ...(finding.assertion_id ? [`Assertion: \`${finding.assertion_id}\``] : []),
+    "",
+    "Problem:",
+    finding.title,
+    "",
+    "Expected:",
+    finding.expected,
+    "",
+    "Actual:",
+    finding.actual,
+    "",
+    "Evidence:",
+    ...finding.evidence.map((item) => `- ${item}`),
+    "",
+    "Reproduction steps:",
+    ...finding.repro_steps.map((step) => `- ${step}`),
+    "",
+    "Acceptance criteria:",
+    `- Resolve \`${finding.id}\` so the affected validation assertion passes.`,
+    ...(finding.recommended_fix_scope ? [`- Stay within this bounded scope: ${finding.recommended_fix_scope}`] : []),
+    "- Leave implementation evidence in a comment, attachment, or work product.",
+  ].join("\n");
+}
+
+function actorLabel(actor: ActorInfo) {
+  if (actor.agentId) return `agent:${actor.agentId}`;
+  if (actor.userId) return `user:${actor.userId}`;
+  return "system";
+}
+
+function findMilestoneForAssertion(
+  features: MissionFeaturesDocument | null,
+  assertionId: string | null | undefined,
+) {
+  if (!features || !assertionId) return null;
+  return (
+    features.milestones.find((milestone) =>
+      milestone.features.some((feature) => feature.claimed_assertion_ids.includes(assertionId)),
+    ) ?? null
+  );
+}
+
+function reportParseDetails(error: unknown) {
+  return error && typeof error === "object" && "issues" in error
+    ? { issues: (error as { issues: unknown }).issues }
+    : undefined;
 }
 
 function classifyMissionIssue(issue: Pick<MissionIssueRow, "originKind" | "title">) {
@@ -572,7 +650,210 @@ export function missionService(db: Db) {
     };
   }
 
+  async function readMissionDocuments(missionIssueId: string) {
+    return (await documentsSvc.listIssueDocuments(missionIssueId)) as IssueDocument[];
+  }
+
+  async function ensureFixIssuesFromValidationReports(
+    mission: MissionIssueRow,
+    actor: ActorInfo,
+  ): Promise<MissionFixCreationResult> {
+    const docs = await readMissionDocuments(mission.id);
+    const decisionLog = docs.find((document) => document.key === "decision-log");
+    const waivers = parseMissionFindingWaivers(decisionLog?.body);
+    const featuresDocument = docs.find((document) => document.key === "features") ?? null;
+    let featurePlan: MissionFeaturesDocument | null = null;
+    if (featuresDocument) {
+      try {
+        featurePlan = parseMissionFeaturesDocument(featuresDocument.body);
+      } catch {
+        featurePlan = null;
+      }
+    }
+
+    const tree = await loadMissionTree(db, mission);
+    const existingFixIssueIds = new Set<string>();
+    const fixLoopByMilestoneKey = new Map<string, MissionIssueRow>();
+    for (const issue of tree) {
+      const findingId = /^.*:feature:fix:(FINDING-[A-Z0-9][A-Z0-9-]*-[0-9]{3,})$/.exec(issue.originId ?? "")?.[1];
+      if (findingId) existingFixIssueIds.add(findingId);
+      if (issue.originKind === "mission_fix_loop" && issue.originId?.startsWith(`${mission.id}:fix_loop:`)) {
+        fixLoopByMilestoneKey.set(issue.originId.slice(`${mission.id}:fix_loop:`.length), issue);
+      }
+    }
+
+    const createdIssueIds: string[] = [];
+    const updatedIssueIds: string[] = [];
+    const skippedFindingIds: string[] = [];
+
+    for (const document of docs.filter((candidate) => isMissionValidationReportKey(candidate.key))) {
+      const round = validationReportRoundFromKey(document.key) ?? undefined;
+      let report: ReturnType<typeof parseMissionValidationReportDocument>;
+      try {
+        report = parseMissionValidationReportDocument(document.body, { round });
+      } catch (error) {
+        throw unprocessable(`Invalid mission validation report document: ${document.key}`, reportParseDetails(error));
+      }
+
+      for (const finding of report.findings) {
+        if (finding.severity !== "blocking") continue;
+        if (finding.status === "resolved" || finding.status === "waived" || waivers.has(finding.id)) {
+          skippedFindingIds.push(finding.id);
+          continue;
+        }
+        if (existingFixIssueIds.has(finding.id)) {
+          skippedFindingIds.push(finding.id);
+          continue;
+        }
+
+        const milestone = findMilestoneForAssertion(featurePlan, finding.assertion_id);
+        const parent = milestone ? fixLoopByMilestoneKey.get(milestone.id) : null;
+        const { issue, created } = await ensureGeneratedIssue({
+          mission,
+          actor,
+          spec: {
+            kind: "feature",
+            key: `fix:${finding.id}`,
+            originKind: "mission_feature",
+            originId: missionFixIssueOriginId(mission.id, finding.id),
+            title: `Mission fix: ${finding.title}`,
+            description: buildFindingFixDescription({
+              mission,
+              finding,
+              reportKey: document.key,
+              round: report.round,
+            }),
+            parentId: parent?.id ?? mission.id,
+            status: "todo",
+            priority: "medium",
+            blockedByIssueIds: [],
+          },
+        });
+
+        if (created) createdIssueIds.push(issue.id);
+        else updatedIssueIds.push(issue.id);
+        existingFixIssueIds.add(finding.id);
+
+        if (parent) {
+          const relations = await issuesSvc.getRelationSummaries(parent.id);
+          await issuesSvc.update(parent.id, {
+            blockedByIssueIds: [...new Set([...relations.blockedBy.map((blocker) => blocker.id), issue.id])],
+            actorAgentId: actor.agentId ?? null,
+            actorUserId: actor.userId ?? null,
+          });
+        }
+      }
+    }
+
+    if (createdIssueIds.length > 0 || updatedIssueIds.length > 0) {
+      await logActivity(db, {
+        companyId: mission.companyId,
+        actorType: actor.agentId ? "agent" : actor.userId ? "user" : "system",
+        actorId: actor.agentId ?? actor.userId ?? "system",
+        agentId: actor.agentId ?? null,
+        action: "mission.validation_fixes_created",
+        entityType: "issue",
+        entityId: mission.id,
+        details: {
+          createdIssueIds,
+          updatedIssueIds,
+          skippedFindingIds,
+        },
+      });
+    }
+
+    return {
+      createdIssueIds,
+      updatedIssueIds: [...new Set(updatedIssueIds.filter((id) => !createdIssueIds.includes(id)))],
+      skippedFindingIds,
+    };
+  }
+
+  async function findFindingInReports(missionIssueId: string, findingId: string) {
+    const docs = await readMissionDocuments(missionIssueId);
+    for (const document of docs.filter((candidate) => isMissionValidationReportKey(candidate.key))) {
+      const round = validationReportRoundFromKey(document.key) ?? undefined;
+      const report = parseMissionValidationReportDocument(document.body, { round });
+      const finding = report.findings.find((candidate) => candidate.id === findingId);
+      if (finding) return { finding, report, reportKey: document.key, documents: docs };
+    }
+    return null;
+  }
+
   return {
+    waiveFinding: async (
+      issueId: string,
+      input: {
+        findingId: string;
+        rationale: string;
+        actor: ActorInfo & { runId?: string | null };
+      },
+    ): Promise<MissionWaiveFindingResult> => {
+      const mission = await issuesSvc.getById(issueId);
+      if (!mission) throw notFound("Mission issue not found");
+      const located = await findFindingInReports(mission.id, input.findingId);
+      if (!located) throw notFound("Mission finding not found");
+      if (located.finding.severity === "blocking") {
+        throw unprocessable("Blocking mission findings require a fix issue and cannot be waived here");
+      }
+
+      const decisionLog = located.documents.find((document) => document.key === "decision-log") ?? null;
+      const existingWaivers = parseMissionFindingWaivers(decisionLog?.body);
+      if (existingWaivers.has(input.findingId) && decisionLog) {
+        return {
+          missionIssueId: mission.id,
+          findingId: input.findingId,
+          waived: false,
+          decisionLogDocumentId: decisionLog.id,
+          latestRevisionId: decisionLog.latestRevisionId,
+        };
+      }
+
+      const now = new Date();
+      const entry = buildMissionFindingWaiverEntry({
+        findingId: input.findingId,
+        rationale: input.rationale,
+        actorLabel: actorLabel(input.actor),
+        createdAt: now,
+      });
+      const body = [decisionLog?.body?.trim() || "# Decision Log", "", entry].join("\n");
+      const upsert = await documentsSvc.upsertIssueDocument({
+        issueId: mission.id,
+        key: "decision-log",
+        title: "Decision Log",
+        format: "markdown",
+        body,
+        changeSummary: `Waived ${input.findingId}`,
+        baseRevisionId: decisionLog?.latestRevisionId ?? null,
+        createdByAgentId: input.actor.agentId ?? null,
+        createdByUserId: input.actor.userId ?? null,
+        createdByRunId: input.actor.runId ?? null,
+      });
+
+      await logActivity(db, {
+        companyId: mission.companyId,
+        actorType: input.actor.agentId ? "agent" : input.actor.userId ? "user" : "system",
+        actorId: input.actor.agentId ?? input.actor.userId ?? "system",
+        agentId: input.actor.agentId ?? null,
+        runId: input.actor.runId ?? null,
+        action: "mission.finding_waived",
+        entityType: "issue",
+        entityId: mission.id,
+        details: {
+          findingId: input.findingId,
+          reportKey: located.reportKey,
+          rationale: input.rationale,
+        },
+      });
+
+      return {
+        missionIssueId: mission.id,
+        findingId: input.findingId,
+        waived: true,
+        decisionLogDocumentId: upsert.document.id,
+        latestRevisionId: upsert.document.latestRevisionId,
+      };
+    },
     decompose: async (
       issueId: string,
       input: {
@@ -790,8 +1071,8 @@ export function missionService(db: Db) {
         .then((rows) => rows[0] ?? null);
       if (!mission) throw notFound("Mission issue not found");
 
-      const tree = await loadMissionTree(db, mission);
-      const issueIds = tree.map((issue) => issue.id);
+      let tree = await loadMissionTree(db, mission);
+      let issueIds = tree.map((issue) => issue.id);
       const maxValidationRounds = input.maxValidationRounds ?? DEFAULT_MAX_VALIDATION_ROUNDS;
       const pendingApprovalIssueIds = [
         ...new Set([
@@ -799,24 +1080,14 @@ export function missionService(db: Db) {
           ...(await findPendingApprovalIssueIds(db, mission.companyId, issueIds)),
         ]),
       ];
-      const [budgetStop, unresolvedBlockers] = await Promise.all([
-        findBudgetStop(db, mission, tree, input.budgetLimitCents),
-        findUnresolvedBlockers(db, mission.companyId, issueIds),
-      ]);
+      const budgetStop = await findBudgetStop(db, mission, tree, input.budgetLimitCents);
       const maxRoundStop = findMaxRoundStop(tree, maxValidationRounds);
-      const unresolvedBlockedIssueIds = new Set(unresolvedBlockers.map((blocker) => blocker.issueId));
-      const wakeableIssues = tree.filter((issue) =>
-        issue.id !== mission.id &&
-        Boolean(issue.assigneeAgentId) &&
-        WAKEABLE_ISSUE_STATUSES.has(issue.status) &&
-        !unresolvedBlockedIssueIds.has(issue.id),
-      );
       const stop = chooseMissionAdvanceStop({
         pendingApprovalIssueIds,
         budgetStop,
         maxRoundStop,
-        unresolvedBlockers,
-        wakeableIssueCount: wakeableIssues.length,
+        unresolvedBlockers: [],
+        wakeableIssueCount: 0,
       });
 
       if (stop?.reason === "approval_required") {
@@ -931,7 +1202,29 @@ export function missionService(db: Db) {
         };
       }
 
-      if (stop?.reason === "unresolved_blockers") {
+      const fixCreation = await ensureFixIssuesFromValidationReports(mission, input.actor);
+      if (fixCreation.createdIssueIds.length > 0 || fixCreation.updatedIssueIds.length > 0) {
+        tree = await loadMissionTree(db, mission);
+        issueIds = tree.map((issue) => issue.id);
+      }
+
+      const unresolvedBlockers = await findUnresolvedBlockers(db, mission.companyId, issueIds);
+      const unresolvedBlockedIssueIds = new Set(unresolvedBlockers.map((blocker) => blocker.issueId));
+      const wakeableIssues = tree.filter((issue) =>
+        issue.id !== mission.id &&
+        Boolean(issue.assigneeAgentId) &&
+        WAKEABLE_ISSUE_STATUSES.has(issue.status) &&
+        !unresolvedBlockedIssueIds.has(issue.id),
+      );
+      const blockerStop = chooseMissionAdvanceStop({
+        pendingApprovalIssueIds: [],
+        budgetStop: null,
+        maxRoundStop: null,
+        unresolvedBlockers,
+        wakeableIssueCount: wakeableIssues.length,
+      });
+
+      if (blockerStop?.reason === "unresolved_blockers") {
         const preview = unresolvedBlockers.slice(0, 3).map((blocker) => {
           const blocked = issueReference({ id: blocker.issueId, identifier: blocker.issueIdentifier });
           const blocking = issueReference({ id: blocker.blockerIssueId, identifier: blocker.blockerIdentifier });
@@ -962,15 +1255,15 @@ export function missionService(db: Db) {
           action: "mission.advance_paused",
           entityType: "issue",
           entityId: mission.id,
-          details: { reason: stop.reason, ...stop.details },
+          details: { reason: blockerStop.reason, ...blockerStop.details, fixCreation },
         });
         return {
           issueId: mission.id,
           action: "paused",
-          stopReason: stop.reason,
+          stopReason: blockerStop.reason,
           wokenIssueIds: [],
           commentId,
-          details: stop.details,
+          details: { ...blockerStop.details, fixCreation },
         };
       }
 
@@ -1005,6 +1298,7 @@ export function missionService(db: Db) {
         details: {
           wokenIssueIds,
           wakeableIssueCount: wakeableIssues.length,
+          fixCreation,
         },
       });
 
@@ -1017,6 +1311,7 @@ export function missionService(db: Db) {
         details: {
           issueCount: tree.length,
           wakeableIssueCount: wakeableIssues.length,
+          fixCreation,
         },
       };
     },

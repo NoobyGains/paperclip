@@ -1,13 +1,16 @@
 import {
   missionFeaturesDocumentSchema,
+  missionValidationReportSchema,
   missionValidationContractSchema,
   type MissionFeaturesDocument,
+  type MissionValidationReport,
   type MissionValidationContract,
 } from "./validators/mission.js";
 
 const VALIDATION_ID_RE = /\bVAL-[A-Z0-9][A-Z0-9-]*-[0-9]{3,}\b/gi;
 const FEATURE_ID_RE = /\bFEAT-[A-Z0-9][A-Z0-9-]*-[0-9]{3,}\b/gi;
 const MILESTONE_ID_RE = /\bMILESTONE-[A-Z0-9][A-Z0-9-]*-[0-9]{3,}\b/gi;
+const FINDING_ID_RE = /\bFINDING-[A-Z0-9][A-Z0-9-]*-[0-9]{3,}\b/gi;
 
 function normalizeId(value: string) {
   return value.trim().toUpperCase();
@@ -68,6 +71,10 @@ function splitList(value: string) {
     .split(/(?:\s*;\s*|\s*,\s*)/)
     .map((part) => part.trim())
     .filter(Boolean);
+}
+
+function normalizeEnumValue(value: string) {
+  return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
 }
 
 export function parseMissionValidationContractDocument(markdown: string): MissionValidationContract {
@@ -205,4 +212,72 @@ export function parseMissionFeaturesDocument(markdown: string): MissionFeaturesD
   }
 
   return missionFeaturesDocumentSchema.parse({ milestones: [...milestoneById.values()] });
+}
+
+export function parseMissionValidationReportDocument(
+  markdown: string,
+  options: { round?: number } = {},
+): MissionValidationReport {
+  const json = extractJsonPayload(markdown);
+  if (json) return missionValidationReportSchema.parse(json);
+
+  const report: Partial<MissionValidationReport> = {
+    round: options.round,
+    summary: "",
+    findings: [],
+  };
+  let currentFinding: MissionValidationReport["findings"][number] | null = null;
+
+  for (const line of markdown.split(/\r?\n/)) {
+    const heading = parseHeading(line);
+    if (heading) {
+      const findingHeading = parseKeyedHeading(heading.text, FINDING_ID_RE);
+      if (findingHeading) {
+        currentFinding = {
+          id: findingHeading.id,
+          severity: "suggestion",
+          assertion_id: null,
+          title: findingHeading.title,
+          evidence: [],
+          repro_steps: [],
+          expected: "",
+          actual: "",
+          suspected_area: null,
+          recommended_fix_scope: null,
+          status: "open",
+        };
+        report.findings!.push(currentFinding);
+        continue;
+      }
+    }
+
+    const field = parseField(line);
+    if (!field) continue;
+
+    if (!currentFinding) {
+      if (field.key === "round") report.round = Number.parseInt(field.value, 10);
+      if (["validator_role", "role"].includes(field.key)) {
+        report.validator_role = normalizeEnumValue(field.value) as MissionValidationReport["validator_role"];
+      }
+      if (field.key === "summary") report.summary = field.value;
+      continue;
+    }
+
+    if (field.key === "severity") {
+      currentFinding.severity = normalizeEnumValue(field.value) as typeof currentFinding.severity;
+    }
+    if (["assertion_id", "assertion", "validation"].includes(field.key)) {
+      currentFinding.assertion_id = extractIds(field.value, VALIDATION_ID_RE)[0] ?? null;
+    }
+    if (field.key === "title") currentFinding.title = field.value;
+    if (field.key === "evidence") currentFinding.evidence = splitList(field.value);
+    if (["repro_steps", "steps", "reproduction"].includes(field.key)) currentFinding.repro_steps = splitList(field.value);
+    if (field.key === "expected") currentFinding.expected = field.value;
+    if (field.key === "actual") currentFinding.actual = field.value;
+    if (field.key === "suspected_area") currentFinding.suspected_area = field.value || null;
+    if (field.key === "recommended_fix_scope") currentFinding.recommended_fix_scope = field.value || null;
+    if (field.key === "status") currentFinding.status = normalizeEnumValue(field.value) as typeof currentFinding.status;
+  }
+
+  return missionValidationReportSchema.parse(report);
 }

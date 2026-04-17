@@ -12,6 +12,7 @@ import {
   checkoutIssueSchema,
   advanceMissionSchema,
   decomposeMissionSchema,
+  waiveMissionFindingSchema,
   createIssueSchema,
   feedbackTargetTypeSchema,
   feedbackTraceStatusSchema,
@@ -928,6 +929,37 @@ export function issueRoutes(
       heartbeat,
       budgetLimitCents: req.body.budgetLimitCents ?? null,
       maxValidationRounds: req.body.maxValidationRounds ?? null,
+    });
+
+    res.json(result);
+  });
+
+  router.post("/issues/:id/mission/findings/:findingId/waive", validate(waiveMissionFindingSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const findingId = req.params.findingId as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    if (!(await assertAgentRunCheckoutOwnership(req, res, issue))) return;
+    if (req.actor.type === "agent") {
+      if (!req.actor.agentId) throw forbidden("Agent authentication required");
+      if (issue.assigneeAgentId !== req.actor.agentId && issue.createdByAgentId !== req.actor.agentId) {
+        throw forbidden("Agents can only waive findings for missions they created or are assigned to");
+      }
+    }
+
+    const actor = getActorInfo(req);
+    const result = await missionService(db).waiveFinding(issue.id, {
+      findingId,
+      rationale: req.body.rationale,
+      actor: {
+        agentId: actor.agentId ?? null,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+        runId: actor.runId ?? null,
+      },
     });
 
     res.json(result);

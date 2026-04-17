@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   companies,
   createDb,
+  activityLog,
   documentRevisions,
   documents,
   executionWorkspaces,
@@ -42,6 +43,7 @@ describeEmbeddedPostgres("missionService.decompose", () => {
 
   afterEach(async () => {
     await db.delete(issueRelations);
+    await db.delete(activityLog);
     await db.delete(issueDocuments);
     await db.delete(documentRevisions);
     await db.delete(documents);
@@ -254,5 +256,112 @@ describeEmbeddedPostgres("missionService.decompose", () => {
       .where(eq(issueRelations.companyId, seeded.companyId));
     expect(relations).toHaveLength(5);
     expect(new Set(relations.map((relation) => `${relation.issueId}:${relation.relatedIssueId}`)).size).toBe(5);
+  });
+
+  it("creates bounded fix issues from blocking validation findings during advance", async () => {
+    const seeded = await seedMission();
+    await missionService(db).decompose(seeded.missionIssueId, { actor: {} });
+    const generated = await db.select().from(issues).where(eq(issues.companyId, seeded.companyId));
+    const validationIssue = generated.find((issue) => issue.originKind === "mission_validation");
+    expect(validationIssue).toBeTruthy();
+    await db.update(issues).set({ status: "done", completedAt: new Date() }).where(eq(issues.id, validationIssue!.id));
+
+    await documentService(db).upsertIssueDocument({
+      issueId: seeded.missionIssueId,
+      key: "validation-report-round-1",
+      title: "Validation Report Round 1",
+      format: "markdown",
+      body: JSON.stringify({
+        round: 1,
+        validator_role: "scrutiny_validator",
+        summary: "One blocking finding found.",
+        findings: [
+          {
+            id: "FINDING-MISSION-001",
+            severity: "blocking",
+            assertion_id: "VAL-MISSION-001",
+            title: "Feature one does not satisfy the contract",
+            evidence: ["Unit test output linked in validation issue comment."],
+            repro_steps: ["Run feature one check."],
+            expected: "Feature one check passes.",
+            actual: "Feature one check fails.",
+            recommended_fix_scope: "Fix feature one behavior only.",
+            status: "open",
+          },
+        ],
+      }),
+    });
+
+    const result = await missionService(db).advance(seeded.missionIssueId, {
+      actor: { actorType: "system", actorId: "test" },
+      heartbeat: { wakeup: async () => null },
+    });
+
+    expect(result.details.fixCreation).toMatchObject({ createdIssueIds: expect.any(Array) });
+    const afterAdvance = await db.select().from(issues).where(eq(issues.companyId, seeded.companyId));
+    const fixIssue = afterAdvance.find((issue) => issue.originId === `${seeded.missionIssueId}:feature:fix:FINDING-MISSION-001`);
+    expect(fixIssue).toBeTruthy();
+    expect(fixIssue?.title).toBe("Mission fix: Feature one does not satisfy the contract");
+    expect(fixIssue?.description).toContain("Acceptance criteria:");
+    expect(fixIssue?.description).toContain("Fix feature one behavior only.");
+
+    const fixLoopIssue = afterAdvance.find((issue) => issue.originKind === "mission_fix_loop");
+    const fixLoopBlockers = await db
+      .select({ blockerId: issueRelations.issueId })
+      .from(issueRelations)
+      .where(and(eq(issueRelations.companyId, seeded.companyId), eq(issueRelations.relatedIssueId, fixLoopIssue!.id)));
+    expect(fixLoopBlockers.map((row) => row.blockerId)).toContain(fixIssue!.id);
+
+    const second = await missionService(db).advance(seeded.missionIssueId, {
+      actor: { actorType: "system", actorId: "test" },
+      heartbeat: { wakeup: async () => null },
+    });
+    expect((second.details.fixCreation as { createdIssueIds: string[] }).createdIssueIds).toHaveLength(0);
+  });
+
+  it("records non-blocking finding waivers in the decision log", async () => {
+    const seeded = await seedMission();
+    await documentService(db).upsertIssueDocument({
+      issueId: seeded.missionIssueId,
+      key: "validation-report-round-1",
+      title: "Validation Report Round 1",
+      format: "markdown",
+      body: JSON.stringify({
+        round: 1,
+        validator_role: "user_testing_validator",
+        summary: "One non-blocking finding found.",
+        findings: [
+          {
+            id: "FINDING-MISSION-002",
+            severity: "non_blocking",
+            assertion_id: "VAL-MISSION-001",
+            title: "Copy could be clearer",
+            evidence: ["Screenshot attached in validation comment."],
+            repro_steps: ["Open the mission summary."],
+            expected: "Copy is clear.",
+            actual: "Copy is understandable but terse.",
+            status: "open",
+          },
+        ],
+      }),
+    });
+
+    const result = await missionService(db).waiveFinding(seeded.missionIssueId, {
+      findingId: "FINDING-MISSION-002",
+      rationale: "Acceptable for MVP because the workflow is still clear.",
+      actor: { runId: "run-1" },
+    });
+    expect(result.waived).toBe(true);
+
+    const decisionLog = await documentService(db).getIssueDocumentByKey(seeded.missionIssueId, "decision-log");
+    expect(decisionLog?.body).toContain("paperclip:mission-finding-waiver:FINDING-MISSION-002");
+    expect(decisionLog?.body).toContain("Acceptable for MVP");
+
+    const second = await missionService(db).waiveFinding(seeded.missionIssueId, {
+      findingId: "FINDING-MISSION-002",
+      rationale: "Duplicate waiver should not create another entry.",
+      actor: { runId: "run-1" },
+    });
+    expect(second.waived).toBe(false);
   });
 });

@@ -81,6 +81,49 @@ export interface MissionValidationReport {
   findings: MissionFinding[];
 }
 
+export interface MissionValidationReportProjection extends MissionValidationReport {
+  documentKey: string;
+  documentTitle: string | null;
+  updatedAt: Date | null;
+}
+
+export interface MissionFindingWaiver {
+  findingId: string;
+  rationale: string;
+}
+
+export interface MissionFindingProjection extends MissionFinding {
+  sourceReportKey: string;
+  sourceReportTitle: string | null;
+  round: number;
+  validator_role: MissionValidationReport["validator_role"];
+  computedStatus: MissionFindingStatus;
+  fixIssue: MissionSummaryIssue | null;
+  waiver: MissionFindingWaiver | null;
+}
+
+export interface MissionValidationFindingCounts {
+  total: number;
+  bySeverity: Record<MissionFindingSeverity, number>;
+  byStatus: Record<MissionFindingStatus, number>;
+}
+
+export interface MissionValidationAssertionFindingSummary {
+  assertion_id: string;
+  findingIds: string[];
+  severity: Record<MissionFindingSeverity, number>;
+  statuses: Record<MissionFindingStatus, number>;
+  evidence: string[];
+}
+
+export interface MissionValidationSummary {
+  reports: MissionValidationReportProjection[];
+  findings: MissionFindingProjection[];
+  counts: MissionValidationFindingCounts;
+  assertions: MissionValidationAssertionFindingSummary[];
+  openBlockingFindingCount: number;
+}
+
 export interface IssueBackedMissionSummary {
   missionIssueId: string;
   missionIdentifier: string | null;
@@ -91,6 +134,7 @@ export interface IssueBackedMissionSummary {
   milestones: MissionMilestoneProjection[];
   blockers: MissionBlockedWorkItem[];
   activeWork: MissionSummaryIssue[];
+  validationSummary: MissionValidationSummary;
   runSummary: MissionRunSummary;
   costSummary: MissionCostSummary;
   next_action: string;
@@ -173,4 +217,12 @@ export interface MissionDecompositionResult {
   createdIssueIds: string[];
   updatedIssueIds: string[];
   issues: MissionDecomposedIssue[];
+}
+
+export interface MissionWaiveFindingResult {
+  missionIssueId: string;
+  findingId: string;
+  waived: boolean;
+  decisionLogDocumentId: string;
+  latestRevisionId: string | null;
 }

@@ -228,6 +228,12 @@ export const advanceMissionSchema = z
   })
   .strict();
 
+export const waiveMissionFindingSchema = z
+  .object({
+    rationale: nonEmptyStringSchema.max(5000),
+  })
+  .strict();
+
 export type MissionValidationAssertion = z.infer<typeof missionValidationAssertionSchema>;
 export type MissionValidationContract = z.infer<typeof missionValidationContractSchema>;
 export type MissionFeature = z.infer<typeof missionFeatureSchema>;
@@ -238,3 +244,4 @@ export type MissionValidationReport = z.infer<typeof missionValidationReportSche
 export type MissionStateDerivationInput = z.infer<typeof missionStateDerivationInputSchema>;
 export type DecomposeMission = z.infer<typeof decomposeMissionSchema>;
 export type AdvanceMission = z.infer<typeof advanceMissionSchema>;
+export type WaiveMissionFinding = z.infer<typeof waiveMissionFindingSchema>;

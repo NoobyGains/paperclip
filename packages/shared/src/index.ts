@@ -405,10 +405,17 @@ export type {
   MissionFeaturesDocument,
   MissionFinding,
   MissionValidationReport,
+  MissionValidationReportProjection,
+  MissionFindingWaiver,
+  MissionFindingProjection,
+  MissionValidationFindingCounts,
+  MissionValidationAssertionFindingSummary,
+  MissionValidationSummary,
   IssueBackedMissionSummary,
   MissionGeneratedIssueKind,
   MissionDecomposedIssue,
   MissionDecompositionResult,
+  MissionWaiveFindingResult,
   MissionDocumentChecklistItem,
   MissionDocumentError,
   MissionSummaryIssue,
@@ -466,6 +473,7 @@ export {
 
 export {
   parseMissionFeaturesDocument,
+  parseMissionValidationReportDocument,
   parseMissionValidationContractDocument,
 } from "./mission-documents.js";
 
@@ -577,6 +585,7 @@ export {
   missionStateDerivationInputSchema,
   decomposeMissionSchema,
   advanceMissionSchema,
+  waiveMissionFindingSchema,
   type CreateIssue,
   type CreateIssueLabel,
   type UpdateIssue,
@@ -600,6 +609,7 @@ export {
   type MissionStateDerivationInput as MissionStateDerivationValidatorInput,
   type DecomposeMission,
   type AdvanceMission,
+  type WaiveMissionFinding,
   createGoalSchema,
   updateGoalSchema,
   type CreateGoal,

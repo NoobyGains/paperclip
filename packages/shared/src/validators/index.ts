@@ -179,6 +179,7 @@ export {
   missionStateDerivationInputSchema,
   decomposeMissionSchema,
   advanceMissionSchema,
+  waiveMissionFindingSchema,
   type MissionValidationAssertion,
   type MissionValidationContract,
   type MissionFeature,
@@ -189,6 +190,7 @@ export {
   type MissionStateDerivationInput,
   type DecomposeMission,
   type AdvanceMission,
+  type WaiveMissionFinding,
 } from "./mission.js";
 
 export {

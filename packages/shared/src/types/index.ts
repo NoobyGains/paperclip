@@ -189,6 +189,12 @@ export type {
   MissionFeaturesDocument,
   MissionFinding,
   MissionValidationReport,
+  MissionValidationReportProjection,
+  MissionFindingWaiver,
+  MissionFindingProjection,
+  MissionValidationFindingCounts,
+  MissionValidationAssertionFindingSummary,
+  MissionValidationSummary,
   IssueBackedMissionSummary,
   MissionDocumentChecklistItem,
   MissionDocumentError,
@@ -200,6 +206,7 @@ export type {
   MissionGeneratedIssueKind,
   MissionDecomposedIssue,
   MissionDecompositionResult,
+  MissionWaiveFindingResult,
 } from "./mission.js";
 export type {
   CompanyPortabilityInclude,

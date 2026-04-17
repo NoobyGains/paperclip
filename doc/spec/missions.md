@@ -88,6 +88,16 @@ Canonical fields:
 - `recommended_fix_scope`: small fix proposal; required when status is `fix_created`.
 - `status`: `open`, `fix_created`, `waived`, or `resolved`.
 
+Blocking findings are converted into bounded fix issues by mission advance. The generated fix issue uses normal issue
+parentage, billing, workspace inheritance, and blocker relationships. Its description links back to the validation report
+document key, assertion, evidence, reproduction steps, and recommended scope. The milestone's fix-loop issue remains
+blocked by active fix issues so completion cannot hide unresolved validation work.
+
+Non-blocking and suggestion findings can be waived through the mission finding waiver route. Waivers are recorded as
+stable marker entries in the mission issue's `decision-log` document with a rationale, actor label, and timestamp. Mission
+summary projections combine validation reports, generated fix issues, and decision-log waivers to compute finding counts,
+severity counts, assertion mappings, evidence, and fix status.
+
 ## State Derivation
 
 MVP mission state is derived from issue and document state rather than a new table.
