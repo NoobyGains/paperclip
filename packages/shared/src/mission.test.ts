@@ -10,6 +10,7 @@ import {
   parseMissionValidationContractDocument,
 } from "./mission-documents.js";
 import {
+  advanceMissionSchema,
   decomposeMissionSchema,
   missionDocumentKeySchema,
   missionFeaturesDocumentSchema,
@@ -267,6 +268,15 @@ describe("mission action validators", () => {
   it("defaults mission decomposition to a mutating run", () => {
     expect(decomposeMissionSchema.parse({})).toEqual({ dryRun: false });
     expect(decomposeMissionSchema.parse({ dryRun: true })).toEqual({ dryRun: true });
+  });
+
+  it("validates mission advance limits", () => {
+    expect(advanceMissionSchema.parse({ budgetLimitCents: 100, maxValidationRounds: 2 })).toEqual({
+      budgetLimitCents: 100,
+      maxValidationRounds: 2,
+    });
+    expect(() => advanceMissionSchema.parse({ budgetLimitCents: 0 })).toThrow();
+    expect(() => advanceMissionSchema.parse({ maxValidationRounds: 21 })).toThrow();
   });
 });
 

@@ -221,6 +221,13 @@ export const decomposeMissionSchema = z
   })
   .strict();
 
+export const advanceMissionSchema = z
+  .object({
+    budgetLimitCents: z.number().int().positive().optional(),
+    maxValidationRounds: z.number().int().positive().max(20).optional(),
+  })
+  .strict();
+
 export type MissionValidationAssertion = z.infer<typeof missionValidationAssertionSchema>;
 export type MissionValidationContract = z.infer<typeof missionValidationContractSchema>;
 export type MissionFeature = z.infer<typeof missionFeatureSchema>;
@@ -230,3 +237,4 @@ export type MissionFinding = z.infer<typeof missionFindingSchema>;
 export type MissionValidationReport = z.infer<typeof missionValidationReportSchema>;
 export type MissionStateDerivationInput = z.infer<typeof missionStateDerivationInputSchema>;
 export type DecomposeMission = z.infer<typeof decomposeMissionSchema>;
+export type AdvanceMission = z.infer<typeof advanceMissionSchema>;

@@ -1,4 +1,17 @@
 import type { Db } from "@paperclipai/db";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import {
+  agents,
+  approvals,
+  budgetIncidents,
+  companies,
+  costEvents,
+  issueApprovals,
+  issueComments,
+  issueRelations,
+  issues,
+  projects,
+} from "@paperclipai/db";
 import {
   parseMissionFeaturesDocument,
   parseMissionValidationContractDocument,
@@ -11,6 +24,11 @@ import {
 import { notFound, unprocessable } from "../errors.js";
 import { documentService } from "./documents.js";
 import { issueService } from "./issues.js";
+import { logActivity } from "./activity-log.js";
+import {
+  queueIssueAssignmentWakeup,
+  type IssueAssignmentWakeupDeps,
+} from "./issue-assignment-wakeup.js";
 
 const GENERATED_ORIGIN_KIND_BY_RESULT_KIND = {
   milestone: "mission_milestone",
@@ -54,6 +72,38 @@ type GeneratedIssueRow = {
   identifier: string | null;
   title: string;
 };
+type MissionIssueRow = typeof issues.$inferSelect;
+type MissionAdvanceActor = ActorInfo & {
+  actorType: "agent" | "user" | "system";
+  actorId: string;
+  runId?: string | null;
+};
+type MissionAdvanceStopReason =
+  | "approval_required"
+  | "budget_limit"
+  | "unresolved_blockers"
+  | "max_validation_rounds";
+export type MissionAdvanceResult = {
+  issueId: string;
+  action: "paused" | "woke_issues" | "noop";
+  stopReason: MissionAdvanceStopReason | null;
+  wokenIssueIds: string[];
+  commentId: string | null;
+  details: Record<string, unknown>;
+};
+export type MissionAdvanceUnresolvedBlocker = {
+  issueId: string;
+  issueIdentifier: string | null;
+  issueTitle: string;
+  blockerIssueId: string;
+  blockerIdentifier: string | null;
+  blockerTitle: string;
+  blockerStatus: string;
+};
+
+const TERMINAL_ISSUE_STATUSES = new Set(["done", "cancelled"]);
+const WAKEABLE_ISSUE_STATUSES = new Set(["todo", "blocked"]);
+const DEFAULT_MAX_VALIDATION_ROUNDS = 3;
 
 function missionOriginId(missionIssueId: string, kind: MissionDecomposedIssue["kind"], key: string) {
   return `${missionIssueId}:${kind}:${key}`;
@@ -139,6 +189,322 @@ function buildFixLoopDescription(input: {
     "",
     "Use this placeholder to anchor fix issues created from blocking validation findings.",
   ].join("\n");
+}
+
+function classifyMissionIssue(issue: Pick<MissionIssueRow, "originKind" | "title">) {
+  const originKind = issue.originKind.toLowerCase();
+  if (originKind.startsWith("mission_")) return originKind;
+
+  const title = issue.title.trim().toLowerCase();
+  if (title.startsWith("milestone")) return "mission_milestone";
+  if (title.startsWith("mission milestone")) return "mission_milestone";
+  if (title.startsWith("validation")) return "mission_validation";
+  if (title.startsWith("mission validation")) return "mission_validation";
+  if (title.startsWith("fix")) return "mission_fix_loop";
+  if (title.startsWith("mission fix")) return "mission_fix_loop";
+  if (title.startsWith("feature")) return "mission_feature";
+  if (title.startsWith("mission feature")) return "mission_feature";
+  return "mission_issue";
+}
+
+function isPendingExecutionState(issue: MissionIssueRow) {
+  const state = issue.executionState;
+  return Boolean(
+    state &&
+      typeof state === "object" &&
+      "status" in state &&
+      (state as { status?: unknown }).status === "pending",
+  );
+}
+
+function buildAdvanceStopComment(input: { marker: string; heading: string; bullets: string[] }) {
+  return [
+    `<!-- ${input.marker} -->`,
+    input.heading,
+    "",
+    ...input.bullets.map((bullet) => `- ${bullet}`),
+  ].join("\n");
+}
+
+async function findExistingMarkerComment(db: Db, issueId: string, marker: string) {
+  return db
+    .select({ id: issueComments.id })
+    .from(issueComments)
+    .where(and(eq(issueComments.issueId, issueId), sql`${issueComments.body} like ${`%${marker}%`}`))
+    .limit(1)
+    .then((rows) => rows[0]?.id ?? null);
+}
+
+async function addMissionCommentOnce(
+  db: Db,
+  issue: MissionIssueRow,
+  actor: MissionAdvanceActor,
+  marker: string,
+  body: string,
+) {
+  const existingCommentId = await findExistingMarkerComment(db, issue.id, marker);
+  if (existingCommentId) return existingCommentId;
+
+  const [comment] = await db
+    .insert(issueComments)
+    .values({
+      companyId: issue.companyId,
+      issueId: issue.id,
+      authorAgentId: actor.agentId ?? null,
+      authorUserId: actor.userId ?? null,
+      createdByRunId: actor.runId ?? null,
+      body,
+    })
+    .returning();
+
+  await db.update(issues).set({ updatedAt: new Date() }).where(eq(issues.id, issue.id));
+
+  await logActivity(db, {
+    companyId: issue.companyId,
+    actorType: actor.actorType,
+    actorId: actor.actorId,
+    agentId: actor.agentId ?? null,
+    runId: actor.runId ?? null,
+    action: "issue.comment_added",
+    entityType: "issue",
+    entityId: issue.id,
+    details: {
+      commentId: comment.id,
+      bodySnippet: comment.body.slice(0, 120),
+      identifier: issue.identifier,
+      issueTitle: issue.title,
+      source: "mission.advance",
+    },
+  });
+
+  return comment.id;
+}
+
+async function loadMissionTree(db: Db, missionIssue: MissionIssueRow) {
+  const rows = await db
+    .select()
+    .from(issues)
+    .where(and(eq(issues.companyId, missionIssue.companyId), isNull(issues.hiddenAt)));
+  const byParent = new Map<string | null, MissionIssueRow[]>();
+  for (const issue of rows) {
+    const siblings = byParent.get(issue.parentId) ?? [];
+    siblings.push(issue);
+    byParent.set(issue.parentId, siblings);
+  }
+
+  const tree = [missionIssue];
+  const queue = [missionIssue.id];
+  const seen = new Set<string>([missionIssue.id]);
+  while (queue.length > 0) {
+    const parentId = queue.shift()!;
+    for (const child of byParent.get(parentId) ?? []) {
+      if (seen.has(child.id)) continue;
+      seen.add(child.id);
+      tree.push(child);
+      queue.push(child.id);
+    }
+  }
+  return tree;
+}
+
+async function findPendingApprovalIssueIds(db: Db, companyId: string, issueIds: string[]) {
+  if (issueIds.length === 0) return [];
+  const rows = await db
+    .select({ issueId: issueApprovals.issueId })
+    .from(issueApprovals)
+    .innerJoin(approvals, eq(issueApprovals.approvalId, approvals.id))
+    .where(
+      and(
+        eq(issueApprovals.companyId, companyId),
+        inArray(issueApprovals.issueId, issueIds),
+        eq(approvals.status, "pending"),
+      ),
+    );
+  return [...new Set(rows.map((row) => row.issueId))];
+}
+
+async function findUnresolvedBlockers(db: Db, companyId: string, issueIds: string[]) {
+  if (issueIds.length === 0) return [];
+  const relationRows = await db
+    .select({
+      blockerIssueId: issueRelations.issueId,
+      blockedIssueId: issueRelations.relatedIssueId,
+    })
+    .from(issueRelations)
+    .where(
+      and(
+        eq(issueRelations.companyId, companyId),
+        eq(issueRelations.type, "blocks"),
+        inArray(issueRelations.relatedIssueId, issueIds),
+      ),
+    );
+  if (relationRows.length === 0) return [];
+
+  const blockerIds = [...new Set(relationRows.map((row) => row.blockerIssueId))];
+  const relatedIds = [...new Set([...issueIds, ...blockerIds])];
+  const relatedIssues = await db
+    .select({
+      id: issues.id,
+      identifier: issues.identifier,
+      title: issues.title,
+      status: issues.status,
+    })
+    .from(issues)
+    .where(and(eq(issues.companyId, companyId), inArray(issues.id, relatedIds)));
+  const issueById = new Map(relatedIssues.map((issue) => [issue.id, issue]));
+
+  return relationRows
+    .map((row) => ({
+      blocked: issueById.get(row.blockedIssueId) ?? null,
+      blocker: issueById.get(row.blockerIssueId) ?? null,
+    }))
+    .filter((row) => row.blocked && row.blocker)
+    .filter((row) => !TERMINAL_ISSUE_STATUSES.has(row.blocked!.status))
+    .filter((row) => row.blocker!.status !== "done")
+    .map((row): MissionAdvanceUnresolvedBlocker => ({
+      issueId: row.blocked!.id,
+      issueIdentifier: row.blocked!.identifier,
+      issueTitle: row.blocked!.title,
+      blockerIssueId: row.blocker!.id,
+      blockerIdentifier: row.blocker!.identifier,
+      blockerTitle: row.blocker!.title,
+      blockerStatus: row.blocker!.status,
+    }));
+}
+
+async function computeMissionSpendCents(db: Db, mission: MissionIssueRow, issueIds: string[]) {
+  const billingCode = mission.billingCode?.trim() || null;
+  const scopeConditions = [];
+  if (billingCode) scopeConditions.push(eq(costEvents.billingCode, billingCode));
+  if (issueIds.length > 0) scopeConditions.push(inArray(costEvents.issueId, issueIds));
+  if (scopeConditions.length === 0) return 0;
+
+  const [row] = await db
+    .select({ total: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::double precision` })
+    .from(costEvents)
+    .where(and(eq(costEvents.companyId, mission.companyId), or(...scopeConditions)!));
+  return Number(row?.total ?? 0);
+}
+
+async function findBudgetStop(db: Db, mission: MissionIssueRow, tree: MissionIssueRow[], budgetLimitCents?: number | null) {
+  const issueIds = tree.map((issue) => issue.id);
+  const spendCents = await computeMissionSpendCents(db, mission, issueIds);
+  if (typeof budgetLimitCents === "number" && spendCents >= budgetLimitCents) {
+    return { kind: "mission_budget_limit" as const, spendCents, budgetLimitCents };
+  }
+
+  const assigneeIds = [...new Set(tree.map((issue) => issue.assigneeAgentId).filter((id): id is string => Boolean(id)))];
+  const projectIds = [...new Set(tree.map((issue) => issue.projectId).filter((id): id is string => Boolean(id)))];
+  const relevantScopeKeys = new Set([
+    `company:${mission.companyId}`,
+    ...assigneeIds.map((id) => `agent:${id}`),
+    ...projectIds.map((id) => `project:${id}`),
+  ]);
+
+  const activeIncident = await db
+    .select({
+      id: budgetIncidents.id,
+      scopeType: budgetIncidents.scopeType,
+      scopeId: budgetIncidents.scopeId,
+      thresholdType: budgetIncidents.thresholdType,
+      amountLimit: budgetIncidents.amountLimit,
+      amountObserved: budgetIncidents.amountObserved,
+    })
+    .from(budgetIncidents)
+    .where(and(eq(budgetIncidents.companyId, mission.companyId), eq(budgetIncidents.status, "open")))
+    .then((rows) =>
+      rows.find((row) => relevantScopeKeys.has(`${row.scopeType}:${row.scopeId}`) && row.thresholdType === "hard_stop") ??
+      null,
+    );
+  if (activeIncident) {
+    return {
+      kind: "budget_hard_stop" as const,
+      incidentId: activeIncident.id,
+      scopeType: activeIncident.scopeType,
+      scopeId: activeIncident.scopeId,
+      amountLimit: activeIncident.amountLimit,
+      amountObserved: activeIncident.amountObserved,
+    };
+  }
+
+  const companyPause = await db
+    .select({ status: companies.status, pauseReason: companies.pauseReason })
+    .from(companies)
+    .where(eq(companies.id, mission.companyId))
+    .then((rows) => rows[0] ?? null);
+  if (companyPause?.status === "paused" && companyPause.pauseReason === "budget") {
+    return { kind: "company_budget_pause" as const, companyId: mission.companyId };
+  }
+
+  const pausedProject = projectIds.length > 0
+    ? await db
+      .select({ id: projects.id, name: projects.name, pauseReason: projects.pauseReason, pausedAt: projects.pausedAt })
+      .from(projects)
+      .where(inArray(projects.id, projectIds))
+      .then((rows) => rows.find((row) => row.pausedAt && row.pauseReason === "budget") ?? null)
+    : null;
+  if (pausedProject) {
+    return { kind: "project_budget_pause" as const, projectId: pausedProject.id, projectName: pausedProject.name };
+  }
+
+  const pausedAgent = assigneeIds.length > 0
+    ? await db
+      .select({ id: agents.id, name: agents.name, pauseReason: agents.pauseReason })
+      .from(agents)
+      .where(and(inArray(agents.id, assigneeIds), eq(agents.status, "paused")))
+      .then((rows) => rows.find((row) => row.pauseReason === "budget") ?? null)
+    : null;
+  if (pausedAgent) {
+    return { kind: "agent_budget_pause" as const, agentId: pausedAgent.id, agentName: pausedAgent.name };
+  }
+
+  return null;
+}
+
+function findMaxRoundStop(tree: MissionIssueRow[], maxValidationRounds: number) {
+  const childrenByParent = new Map<string | null, MissionIssueRow[]>();
+  for (const issue of tree) {
+    const siblings = childrenByParent.get(issue.parentId) ?? [];
+    siblings.push(issue);
+    childrenByParent.set(issue.parentId, siblings);
+  }
+
+  for (const issue of tree) {
+    if (classifyMissionIssue(issue) !== "mission_milestone") continue;
+    if (TERMINAL_ISSUE_STATUSES.has(issue.status)) continue;
+    const validationCount = (childrenByParent.get(issue.id) ?? [])
+      .filter((child) => classifyMissionIssue(child) === "mission_validation")
+      .filter((child) => TERMINAL_ISSUE_STATUSES.has(child.status))
+      .length;
+    if (validationCount >= maxValidationRounds) {
+      return {
+        milestoneIssueId: issue.id,
+        milestoneIdentifier: issue.identifier,
+        milestoneTitle: issue.title,
+        validationRounds: validationCount,
+        maxValidationRounds,
+      };
+    }
+  }
+  return null;
+}
+
+export function chooseMissionAdvanceStop(input: {
+  pendingApprovalIssueIds: string[];
+  budgetStop: unknown | null;
+  maxRoundStop: unknown | null;
+  unresolvedBlockers: MissionAdvanceUnresolvedBlocker[];
+  wakeableIssueCount?: number;
+}): { reason: MissionAdvanceStopReason; details: Record<string, unknown> } | null {
+  if (input.pendingApprovalIssueIds.length > 0) {
+    return { reason: "approval_required", details: { pendingApprovalIssueIds: input.pendingApprovalIssueIds } };
+  }
+  if (input.budgetStop) return { reason: "budget_limit", details: { budgetStop: input.budgetStop } };
+  if (input.maxRoundStop) return { reason: "max_validation_rounds", details: { maxRoundStop: input.maxRoundStop } };
+  if (input.unresolvedBlockers.length > 0 && (input.wakeableIssueCount ?? 0) === 0) {
+    return { reason: "unresolved_blockers", details: { unresolvedBlockers: input.unresolvedBlockers } };
+  }
+  return null;
 }
 
 export function missionService(db: Db) {
@@ -406,6 +772,252 @@ export function missionService(db: Db) {
         createdIssueIds,
         updatedIssueIds: [...new Set(updatedIssueIds.filter((id) => !createdIssueIds.includes(id)))],
         issues: resultIssues,
+      };
+    },
+    advance: async (
+      issueId: string,
+      input: {
+        actor: MissionAdvanceActor;
+        heartbeat: IssueAssignmentWakeupDeps;
+        budgetLimitCents?: number | null;
+        maxValidationRounds?: number | null;
+      },
+    ): Promise<MissionAdvanceResult> => {
+      const mission = await db
+        .select()
+        .from(issues)
+        .where(eq(issues.id, issueId))
+        .then((rows) => rows[0] ?? null);
+      if (!mission) throw notFound("Mission issue not found");
+
+      const tree = await loadMissionTree(db, mission);
+      const issueIds = tree.map((issue) => issue.id);
+      const maxValidationRounds = input.maxValidationRounds ?? DEFAULT_MAX_VALIDATION_ROUNDS;
+      const pendingApprovalIssueIds = [
+        ...new Set([
+          ...tree.filter((issue) => issue.status === "in_review" || isPendingExecutionState(issue)).map((issue) => issue.id),
+          ...(await findPendingApprovalIssueIds(db, mission.companyId, issueIds)),
+        ]),
+      ];
+      const [budgetStop, unresolvedBlockers] = await Promise.all([
+        findBudgetStop(db, mission, tree, input.budgetLimitCents),
+        findUnresolvedBlockers(db, mission.companyId, issueIds),
+      ]);
+      const maxRoundStop = findMaxRoundStop(tree, maxValidationRounds);
+      const unresolvedBlockedIssueIds = new Set(unresolvedBlockers.map((blocker) => blocker.issueId));
+      const wakeableIssues = tree.filter((issue) =>
+        issue.id !== mission.id &&
+        Boolean(issue.assigneeAgentId) &&
+        WAKEABLE_ISSUE_STATUSES.has(issue.status) &&
+        !unresolvedBlockedIssueIds.has(issue.id),
+      );
+      const stop = chooseMissionAdvanceStop({
+        pendingApprovalIssueIds,
+        budgetStop,
+        maxRoundStop,
+        unresolvedBlockers,
+        wakeableIssueCount: wakeableIssues.length,
+      });
+
+      if (stop?.reason === "approval_required") {
+        const commentId = await addMissionCommentOnce(
+          db,
+          mission,
+          input.actor,
+          "paperclip:mission-advance:approval-stop",
+          buildAdvanceStopComment({
+            marker: "paperclip:mission-advance:approval-stop",
+            heading: "Mission advance paused for approval",
+            bullets: [
+              "At least one mission issue is waiting on review or approval.",
+              "The coordinator did not wake workers or validators while approval is pending.",
+            ],
+          }),
+        );
+        await logActivity(db, {
+          companyId: mission.companyId,
+          actorType: input.actor.actorType,
+          actorId: input.actor.actorId,
+          agentId: input.actor.agentId ?? null,
+          runId: input.actor.runId ?? null,
+          action: "mission.advance_paused",
+          entityType: "issue",
+          entityId: mission.id,
+          details: { reason: stop.reason, ...stop.details },
+        });
+        return {
+          issueId: mission.id,
+          action: "paused",
+          stopReason: stop.reason,
+          wokenIssueIds: [],
+          commentId,
+          details: stop.details,
+        };
+      }
+
+      if (stop?.reason === "budget_limit") {
+        const commentId = await addMissionCommentOnce(
+          db,
+          mission,
+          input.actor,
+          "paperclip:mission-advance:budget-stop",
+          buildAdvanceStopComment({
+            marker: "paperclip:mission-advance:budget-stop",
+            heading: "Mission advance paused by budget limits",
+            bullets: [
+              "The coordinator found a mission budget limit, active hard stop, or budget-paused assignee.",
+              "No workers or validators were woken. Raise or resolve the budget stop before advancing again.",
+            ],
+          }),
+        );
+        await logActivity(db, {
+          companyId: mission.companyId,
+          actorType: input.actor.actorType,
+          actorId: input.actor.actorId,
+          agentId: input.actor.agentId ?? null,
+          runId: input.actor.runId ?? null,
+          action: "mission.advance_paused",
+          entityType: "issue",
+          entityId: mission.id,
+          details: { reason: stop.reason, ...stop.details },
+        });
+        return {
+          issueId: mission.id,
+          action: "paused",
+          stopReason: stop.reason,
+          wokenIssueIds: [],
+          commentId,
+          details: stop.details,
+        };
+      }
+
+      if (stop?.reason === "max_validation_rounds") {
+        const roundStop = maxRoundStop!;
+        const commentId = await addMissionCommentOnce(
+          db,
+          mission,
+          input.actor,
+          "paperclip:mission-advance:max-validation-rounds-stop",
+          buildAdvanceStopComment({
+            marker: "paperclip:mission-advance:max-validation-rounds-stop",
+            heading: "Mission advance paused at the validation round limit",
+            bullets: [
+              `${issueReference({
+                id: roundStop.milestoneIssueId,
+                identifier: roundStop.milestoneIdentifier,
+              })} has ${roundStop.validationRounds} validation rounds.`,
+              "A human or orchestrator needs to decide whether to raise the limit, waive remaining risk, or stop the mission.",
+            ],
+          }),
+        );
+        await logActivity(db, {
+          companyId: mission.companyId,
+          actorType: input.actor.actorType,
+          actorId: input.actor.actorId,
+          agentId: input.actor.agentId ?? null,
+          runId: input.actor.runId ?? null,
+          action: "mission.advance_paused",
+          entityType: "issue",
+          entityId: mission.id,
+          details: { reason: stop.reason, ...stop.details },
+        });
+        return {
+          issueId: mission.id,
+          action: "paused",
+          stopReason: stop.reason,
+          wokenIssueIds: [],
+          commentId,
+          details: stop.details,
+        };
+      }
+
+      if (stop?.reason === "unresolved_blockers") {
+        const preview = unresolvedBlockers.slice(0, 3).map((blocker) => {
+          const blocked = issueReference({ id: blocker.issueId, identifier: blocker.issueIdentifier });
+          const blocking = issueReference({ id: blocker.blockerIssueId, identifier: blocker.blockerIdentifier });
+          return `${blocked} is waiting on ${blocking} (${blocker.blockerStatus}).`;
+        });
+        const commentId = await addMissionCommentOnce(
+          db,
+          mission,
+          input.actor,
+          "paperclip:mission-advance:blocker-stop",
+          buildAdvanceStopComment({
+            marker: "paperclip:mission-advance:blocker-stop",
+            heading: "Mission advance paused on unresolved blockers",
+            bullets: [
+              ...preview,
+              ...(unresolvedBlockers.length > preview.length
+                ? [`${unresolvedBlockers.length - preview.length} more blocker relation(s) are still unresolved.`]
+                : []),
+            ],
+          }),
+        );
+        await logActivity(db, {
+          companyId: mission.companyId,
+          actorType: input.actor.actorType,
+          actorId: input.actor.actorId,
+          agentId: input.actor.agentId ?? null,
+          runId: input.actor.runId ?? null,
+          action: "mission.advance_paused",
+          entityType: "issue",
+          entityId: mission.id,
+          details: { reason: stop.reason, ...stop.details },
+        });
+        return {
+          issueId: mission.id,
+          action: "paused",
+          stopReason: stop.reason,
+          wokenIssueIds: [],
+          commentId,
+          details: stop.details,
+        };
+      }
+
+      const wokenIssueIds: string[] = [];
+      for (const issue of wakeableIssues) {
+        await queueIssueAssignmentWakeup({
+          heartbeat: input.heartbeat,
+          issue: {
+            id: issue.id,
+            assigneeAgentId: issue.assigneeAgentId,
+            status: issue.status,
+          },
+          reason: issue.status === "blocked" ? "issue_blockers_resolved" : "issue_assigned",
+          mutation: "mission.advance",
+          contextSource: "mission.advance",
+          requestedByActorType: input.actor.actorType,
+          requestedByActorId: input.actor.actorId,
+          rethrowOnError: true,
+        });
+        wokenIssueIds.push(issue.id);
+      }
+
+      await logActivity(db, {
+        companyId: mission.companyId,
+        actorType: input.actor.actorType,
+        actorId: input.actor.actorId,
+        agentId: input.actor.agentId ?? null,
+        runId: input.actor.runId ?? null,
+        action: "mission.advance",
+        entityType: "issue",
+        entityId: mission.id,
+        details: {
+          wokenIssueIds,
+          wakeableIssueCount: wakeableIssues.length,
+        },
+      });
+
+      return {
+        issueId: mission.id,
+        action: wokenIssueIds.length > 0 ? "woke_issues" : "noop",
+        stopReason: null,
+        wokenIssueIds,
+        commentId: null,
+        details: {
+          issueCount: tree.length,
+          wakeableIssueCount: wakeableIssues.length,
+        },
       };
     },
   };

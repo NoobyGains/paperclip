@@ -10,6 +10,7 @@ import {
   createIssueWorkProductSchema,
   createIssueLabelSchema,
   checkoutIssueSchema,
+  advanceMissionSchema,
   decomposeMissionSchema,
   createIssueSchema,
   feedbackTargetTypeSchema,
@@ -311,7 +312,6 @@ export function issueRoutes(
   const executionWorkspacesSvc = executionWorkspaceService(db);
   const workProductsSvc = workProductService(db);
   const documentsSvc = documentService(db);
-  const missionsSvc = missionService(db);
   const routinesSvc = routineService(db);
   const feedbackExportService = opts?.feedbackExportService;
   const upload = multer({
@@ -867,7 +867,7 @@ export function issueRoutes(
     }
 
     const actor = getActorInfo(req);
-    const result = await missionsSvc.decompose(issue.id, {
+    const result = await missionService(db).decompose(issue.id, {
       actor: {
         agentId: actor.agentId ?? null,
         userId: actor.actorType === "user" ? actor.actorId : null,
@@ -896,6 +896,39 @@ export function issueRoutes(
         },
       });
     }
+
+    res.json(result);
+  });
+
+  router.post("/issues/:id/mission/advance", validate(advanceMissionSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    if (!(await assertAgentRunCheckoutOwnership(req, res, issue))) return;
+    if (req.actor.type === "agent") {
+      if (!req.actor.agentId) throw forbidden("Agent authentication required");
+      if (issue.assigneeAgentId !== req.actor.agentId && issue.createdByAgentId !== req.actor.agentId) {
+        throw forbidden("Agents can only advance missions they created or are assigned to");
+      }
+    }
+
+    const actor = getActorInfo(req);
+    const result = await missionService(db).advance(issue.id, {
+      actor: {
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId ?? null,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+        runId: actor.runId ?? null,
+      },
+      heartbeat,
+      budgetLimitCents: req.body.budgetLimitCents ?? null,
+      maxValidationRounds: req.body.maxValidationRounds ?? null,
+    });
 
     res.json(result);
   });
