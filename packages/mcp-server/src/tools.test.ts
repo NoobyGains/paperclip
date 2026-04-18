@@ -775,4 +775,81 @@ describe("paperclip MCP tools", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });
+
+  describe("paperclipListPlugins (PL1)", () => {
+    it("returns the full catalog when no filter is supplied", async () => {
+      vi.stubGlobal("fetch", vi.fn());
+
+      const tool = getTool("paperclipListPlugins");
+      const response = await tool.execute({});
+
+      const catalog = JSON.parse(response.content[0]!.text) as Array<{ id: string }>;
+      expect(Array.isArray(catalog)).toBe(true);
+      expect(catalog.length).toBeGreaterThanOrEqual(13);
+    });
+
+    it("makes no network calls (static catalog)", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tool = getTool("paperclipListPlugins");
+      await tool.execute({});
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("filters by category=notifications", async () => {
+      vi.stubGlobal("fetch", vi.fn());
+
+      const tool = getTool("paperclipListPlugins");
+      const response = await tool.execute({ filter: { category: "notifications" } });
+
+      const results = JSON.parse(response.content[0]!.text) as Array<{ id: string; category: string }>;
+      expect(results.length).toBeGreaterThanOrEqual(1);
+      for (const entry of results) {
+        expect(entry.category).toBe("notifications");
+      }
+    });
+
+    it("filters by tags=['slack']", async () => {
+      vi.stubGlobal("fetch", vi.fn());
+
+      const tool = getTool("paperclipListPlugins");
+      const response = await tool.execute({ filter: { tags: ["slack"] } });
+
+      const results = JSON.parse(response.content[0]!.text) as Array<{ id: string; tags: string[] }>;
+      expect(results.length).toBeGreaterThanOrEqual(1);
+      for (const entry of results) {
+        expect(entry.tags).toContain("slack");
+      }
+    });
+
+    it("filters by subscriptionCompatible=true returns all v1 entries", async () => {
+      vi.stubGlobal("fetch", vi.fn());
+
+      const tool = getTool("paperclipListPlugins");
+      const unfiltered = await tool.execute({});
+      const filtered = await tool.execute({ filter: { subscriptionCompatible: true } });
+
+      const allCount = (JSON.parse(unfiltered.content[0]!.text) as unknown[]).length;
+      const filteredCount = (JSON.parse(filtered.content[0]!.text) as unknown[]).length;
+      expect(filteredCount).toBe(allCount);
+    });
+
+    it("returns empty array when no entries match the filter", async () => {
+      vi.stubGlobal("fetch", vi.fn());
+
+      const tool = getTool("paperclipListPlugins");
+      const response = await tool.execute({ filter: { tags: ["nonexistent-tag-xyz-9999"] } });
+
+      const results = JSON.parse(response.content[0]!.text) as unknown[];
+      expect(results).toHaveLength(0);
+    });
+
+    it("is annotated as readOnly=true with no network side effects", () => {
+      const tool = getTool("paperclipListPlugins");
+      expect(tool.annotations?.readOnlyHint).toBe(true);
+      expect(tool.annotations?.destructiveHint).toBe(false);
+    });
+  });
 });

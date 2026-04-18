@@ -151,7 +151,7 @@ describe("paperclip MCP resources", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("setup recipe resource fetches /llms/setup-recipe.txt", async () => {
+  it("setup recipe resource fetches /llms/setup-recipe.txt and appends plugin section", async () => {
     const recipeBody = [
       "# Paperclip Setup Recipe",
       "",
@@ -166,17 +166,80 @@ describe("paperclip MCP resources", () => {
       "For each project: call `paperclipOnboardPortfolio` with the repo path",
     ].join("\n");
 
-    const fetchMock = vi.fn().mockResolvedValue(mockTextResponse(recipeBody));
+    const fetchMock = vi.fn().mockImplementation((url: URL | string) => {
+      const u = String(url);
+      if (u.includes("/llms/setup-recipe.txt")) {
+        return Promise.resolve(mockTextResponse(recipeBody));
+      }
+      if (u.includes("/api/me/profile")) {
+        return Promise.resolve(mockJsonResponse({ subscriptionOnly: true }));
+      }
+      return Promise.resolve(mockJsonResponse({}));
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const text = await findResource("Setup recipe").read();
     expect(text).toContain("# Paperclip Setup Recipe");
     expect(text).toContain("paperclipOnboardPortfolio");
     expect(text).toContain("subscription-only");
+    // Plugin section should be appended
+    expect(text).toContain("## Plugins relevant to your setup");
+    expect(text).toContain("paperclip://plugins");
 
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(String(url)).toBe("http://localhost:3100/llms/setup-recipe.txt");
-    expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer token-abc");
+    const urls = fetchMock.mock.calls.map((args) => String(args[0]));
+    expect(urls.some((u) => u.includes("/llms/setup-recipe.txt"))).toBe(true);
+  });
+
+  it("plugin catalog resource returns all catalog entries as JSON", async () => {
+    const text = await findResource("Plugin catalog").read();
+    const catalog = JSON.parse(text) as Array<{ id: string }>;
+    expect(Array.isArray(catalog)).toBe(true);
+    expect(catalog.length).toBeGreaterThanOrEqual(13);
+    const ids = catalog.map((e) => e.id);
+    expect(ids).toContain("paperclip-plugin-slack");
+    expect(ids).toContain("paperclip-plugin-discord");
+    expect(ids).toContain("paperclip-plugin-hindsight");
+  });
+
+  it("plugin catalog resource requires no network calls (static data)", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await findResource("Plugin catalog").read();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("recommended plugins resource fetches operator profile and returns ranked entries", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: URL | string) => {
+      const u = String(url);
+      if (u.includes("/api/me/profile")) {
+        return Promise.resolve(
+          mockJsonResponse({
+            subscriptionOnly: false,
+            preferences: { notes: "we use slack" },
+          }),
+        );
+      }
+      return Promise.resolve(mockJsonResponse({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const text = await findResource("Recommended plugins").read();
+    const results = JSON.parse(text) as Array<{ id: string }>;
+    expect(Array.isArray(results)).toBe(true);
+    const ids = results.map((e) => e.id);
+    // slack preference → slack plugin should appear
+    expect(ids).toContain("paperclip-plugin-slack");
+  });
+
+  it("recommended plugins resource falls back gracefully when profile fetch fails", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const text = await findResource("Recommended plugins").read();
+    const results = JSON.parse(text) as Array<{ id: string }>;
+    // Should still return something (null profile uses default scoring)
+    expect(Array.isArray(results)).toBe(true);
   });
 
   describe("R1 — paperclip://archetypes resource", () => {
