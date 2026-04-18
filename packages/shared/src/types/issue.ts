@@ -198,6 +198,7 @@ export interface Issue {
   originKind?: IssueOriginKind;
   originId?: string | null;
   originRunId?: string | null;
+  metadata?: Record<string, unknown> | null;
   requestDepth: number;
   billingCode: string | null;
   assigneeAdapterOverrides: IssueAssigneeAdapterOverrides | null;

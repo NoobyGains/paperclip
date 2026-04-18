@@ -41,6 +41,7 @@ export const portabilityCompanyManifestEntrySchema = z.object({
   codexSandboxLoopbackEnabled: z.boolean().default(true),
   autoHireEnabled: z.boolean().default(false),
   defaultHireAdapter: z.string().min(1).max(64).nullable().default(null),
+  defaultReviewerAgentSlug: z.string().min(1).nullable().default(null),
   defaultReviewerAgentId: z.string().uuid().nullable().default(null),
   autoReviewEnabled: z.boolean().default(false),
   feedbackDataSharingEnabled: z.boolean().default(false),

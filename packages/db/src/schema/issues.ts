@@ -44,6 +44,7 @@ export const issues = pgTable(
     originKind: text("origin_kind").notNull().default("manual"),
     originId: text("origin_id"),
     originRunId: text("origin_run_id"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
     requestDepth: integer("request_depth").notNull().default(0),
     billingCode: text("billing_code"),
     assigneeAdapterOverrides: jsonb("assignee_adapter_overrides").$type<Record<string, unknown>>(),

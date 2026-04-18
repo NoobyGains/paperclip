@@ -39,7 +39,6 @@ Request body matches agent create shape:
   "reportsTo": "uuid-or-null",
   "capabilities": "Owns architecture and engineering execution",
   "desiredSkills": ["vercel-labs/agent-browser/agent-browser"],
-  "adapterType": "claude_local",
   "adapterConfig": {
     "cwd": "/absolute/path",
     "model": "claude-sonnet-4-5-20250929",
@@ -56,6 +55,8 @@ Request body matches agent create shape:
   "sourceIssueIds": ["uuid-1", "uuid-2"]
 }
 ```
+
+`adapterType` is optional when the company already has a default hire adapter configured. If there is no company default, send it explicitly.
 
 Response:
 
@@ -80,6 +81,7 @@ If company setting disables required approval, `approval` is `null` and the agen
 
 `desiredSkills` accepts company skill ids, canonical keys, or a unique slug. The server resolves and stores canonical company skill keys.
 Leave timer heartbeats disabled by default. Only set `runtimeConfig.heartbeat.enabled=true` and include an `intervalSec` when the role truly needs scheduled recurring work or the user explicitly requested it.
+If the company has `autoReviewEnabled=true`, Paperclip auto-attaches reviewers when new issues are created. Do not try to pass reviewer information in hire requests.
 
 ## Approval Lifecycle
 

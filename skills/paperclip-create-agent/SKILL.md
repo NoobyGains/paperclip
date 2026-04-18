@@ -60,13 +60,14 @@ curl -sS "$PAPERCLIP_API_URL/llms/agent-icons.txt" \
 - role/title/name
 - icon (required in practice; use one from `/llms/agent-icons.txt`)
 - reporting line (`reportsTo`)
-- adapter type
+- adapter type when the company does not already define a default hire adapter
 - optional `desiredSkills` from the company skill library when this role needs installed skills on day one
 - adapter and runtime config aligned to this environment
 - leave timer heartbeats off by default; only set `runtimeConfig.heartbeat.enabled=true` with an `intervalSec` when the role genuinely needs scheduled recurring work or the user explicitly asked for it
 - capabilities
 - run prompt in adapter config (`promptTemplate` where applicable)
 - source issue linkage (`sourceIssueId` or `sourceIssueIds`) when this hire came from an issue
+- reviewer assignment is automatic when the company has `autoReviewEnabled=true` and a configured default reviewer
 
 7. Submit hire request.
 
@@ -82,12 +83,13 @@ curl -sS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/agent-h
     "reportsTo": "<ceo-agent-id>",
     "capabilities": "Owns technical roadmap, architecture, staffing, execution",
     "desiredSkills": ["vercel-labs/agent-browser/agent-browser"],
-    "adapterType": "codex_local",
     "adapterConfig": {"cwd": "/abs/path/to/repo", "model": "o4-mini"},
     "runtimeConfig": {"heartbeat": {"enabled": false, "wakeOnDemand": true}},
     "sourceIssueId": "<issue-id>"
   }'
 ```
+
+If the company has no default hire adapter, include `"adapterType"` explicitly.
 
 8. Handle governance state:
 - if response has `approval`, hire is `pending_approval`

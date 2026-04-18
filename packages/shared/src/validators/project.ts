@@ -13,6 +13,14 @@ const executionWorkspaceStrategySchema = z
   })
   .strict();
 
+const projectWorkspaceGithubBridgeSchema = z
+  .object({
+    enabled: z.boolean(),
+    labelFilter: z.array(z.string().trim().min(1)).optional().nullable(),
+    agentIdOverride: z.string().uuid().optional().nullable(),
+  })
+  .strict();
+
 export const projectExecutionWorkspacePolicySchema = z
   .object({
     enabled: z.boolean(),
@@ -32,6 +40,7 @@ export const projectWorkspaceRuntimeConfigSchema = z.object({
   workspaceRuntime: z.record(z.unknown()).optional().nullable(),
   desiredState: z.enum(["running", "stopped"]).optional().nullable(),
   serviceStates: z.record(z.enum(["running", "stopped"])).optional().nullable(),
+  githubBridge: projectWorkspaceGithubBridgeSchema.optional().nullable(),
 }).strict();
 
 const projectWorkspaceSourceTypeSchema = z.enum(["local_path", "git_repo", "remote_managed", "non_git_path"]);

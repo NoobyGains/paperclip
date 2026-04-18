@@ -428,6 +428,13 @@
       "when": 1776643200000,
       "tag": "0060_adapter_defaults",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1776517904782,
+      "tag": "0061_blue_madripoor",
+      "breakpoints": true
     }
   ]
 }

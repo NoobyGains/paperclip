@@ -5,6 +5,7 @@ import type { Db } from "@paperclipai/db";
 import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable } from "@paperclipai/db";
 import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
 import {
+  agentAdapterTypeSchema,
   agentSkillSyncSchema,
   agentMineInboxQuerySchema,
   createAgentKeySchema,
@@ -44,7 +45,7 @@ import {
   syncInstructionsBundleConfigFromFilePath,
   workspaceOperationService,
 } from "../services/index.js";
-import { conflict, forbidden, notFound, unauthorized, unprocessable } from "../errors.js";
+import { badRequest, conflict, forbidden, notFound, unauthorized, unprocessable } from "../errors.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import {
   assertNoAgentHostWorkspaceCommandMutation,
@@ -76,6 +77,12 @@ import {
 import { getTelemetryClient } from "../telemetry.js";
 
 export function agentRoutes(db: Db) {
+  const createAgentRouteSchema = createAgentSchema
+    .omit({ adapterType: true })
+    .extend({
+      adapterType: agentAdapterTypeSchema.optional(),
+    });
+
   // Legacy hardcoded maps — used as fallback when adapter module does not
   // declare capability flags explicitly.
   const DEFAULT_INSTRUCTIONS_PATH_KEYS: Record<string, string> = {
@@ -390,6 +397,29 @@ export function agentRoutes(db: Db) {
       throw unprocessable(`Unknown adapter type: ${adapterType}`);
     }
     return adapterType;
+  }
+
+  function resolveCompanyDefaultAdapterType(input: {
+    requestedAdapterType: string | null | undefined;
+    defaultHireAdapter: string | null | undefined;
+  }): string {
+    const requestedAdapterType =
+      typeof input.requestedAdapterType === "string" && input.requestedAdapterType.trim().length > 0
+        ? input.requestedAdapterType.trim()
+        : null;
+    if (requestedAdapterType) {
+      return assertKnownAdapterType(requestedAdapterType);
+    }
+    const defaultHireAdapter =
+      typeof input.defaultHireAdapter === "string" && input.defaultHireAdapter.trim().length > 0
+        ? input.defaultHireAdapter.trim()
+        : null;
+    if (!defaultHireAdapter) {
+      throw badRequest(
+        "adapterType is required: neither passed in the payload nor configured as company.defaultHireAdapter. Set one in company settings or include adapterType in the request.",
+      );
+    }
+    return assertKnownAdapterType(defaultHireAdapter);
   }
 
   function hasOwn(value: object, key: string): boolean {
@@ -1371,6 +1401,15 @@ export function agentRoutes(db: Db) {
   router.post("/companies/:companyId/agent-hires", validate(createAgentHireSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     await assertCanCreateAgentsForCompany(req, companyId);
+    const company = await db
+      .select()
+      .from(companies)
+      .where(eq(companies.id, companyId))
+      .then((rows) => rows[0] ?? null);
+    if (!company) {
+      res.status(404).json({ error: "Company not found" });
+      return;
+    }
     const sourceIssueIds = parseSourceIssueIds(req.body);
     const {
       desiredSkills: requestedDesiredSkills,
@@ -1378,7 +1417,10 @@ export function agentRoutes(db: Db) {
       sourceIssueIds: _sourceIssueIds,
       ...hireInput
     } = req.body;
-    hireInput.adapterType = assertKnownAdapterType(hireInput.adapterType);
+    hireInput.adapterType = resolveCompanyDefaultAdapterType({
+      requestedAdapterType: hireInput.adapterType,
+      defaultHireAdapter: company.defaultHireAdapter,
+    });
     assertNoAgentHostWorkspaceCommandMutation(
       req,
       collectAgentAdapterWorkspaceCommandPaths(hireInput.adapterConfig),
@@ -1412,16 +1454,6 @@ export function agentRoutes(db: Db) {
       adapterConfig: normalizedAdapterConfig,
       runtimeConfig: normalizeNewAgentRuntimeConfig(hireInput.runtimeConfig),
     };
-
-    const company = await db
-      .select()
-      .from(companies)
-      .where(eq(companies.id, companyId))
-      .then((rows) => rows[0] ?? null);
-    if (!company) {
-      res.status(404).json({ error: "Company not found" });
-      return;
-    }
 
     const requiresApproval = company.requireBoardApprovalForNewAgents;
     const status = requiresApproval ? "pending_approval" : "idle";
@@ -1540,7 +1572,7 @@ export function agentRoutes(db: Db) {
     res.status(201).json({ agent, approval });
   });
 
-  router.post("/companies/:companyId/agents", validate(createAgentSchema), async (req, res) => {
+  router.post("/companies/:companyId/agents", validate(createAgentRouteSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
 
@@ -1548,11 +1580,24 @@ export function agentRoutes(db: Db) {
       assertBoard(req);
     }
 
+    const company = await db
+      .select()
+      .from(companies)
+      .where(eq(companies.id, companyId))
+      .then((rows) => rows[0] ?? null);
+    if (!company) {
+      res.status(404).json({ error: "Company not found" });
+      return;
+    }
+
     const {
       desiredSkills: requestedDesiredSkills,
       ...createInput
     } = req.body;
-    createInput.adapterType = assertKnownAdapterType(createInput.adapterType);
+    createInput.adapterType = resolveCompanyDefaultAdapterType({
+      requestedAdapterType: createInput.adapterType,
+      defaultHireAdapter: company.defaultHireAdapter,
+    });
     const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
       createInput.adapterType,
       ((createInput.adapterConfig ?? {}) as Record<string, unknown>),

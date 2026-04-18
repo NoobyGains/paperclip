@@ -1,4 +1,5 @@
 import type { ProjectWorkspaceRuntimeConfig } from "@paperclipai/shared";
+import { isUuidLike } from "@paperclipai/shared";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -19,6 +20,33 @@ function readServiceStates(value: unknown): ProjectWorkspaceRuntimeConfig["servi
   return Object.fromEntries(entries) as ProjectWorkspaceRuntimeConfig["serviceStates"];
 }
 
+function readGithubBridge(value: unknown): NonNullable<ProjectWorkspaceRuntimeConfig["githubBridge"]> | null {
+  if (!isRecord(value) || typeof value.enabled !== "boolean") return null;
+
+  const labelFilter = Array.isArray(value.labelFilter)
+    ? Array.from(
+      new Set(
+        value.labelFilter
+          .filter((entry): entry is string => typeof entry === "string")
+          .map((entry) => entry.trim())
+          .filter((entry) => entry.length > 0),
+      ),
+    )
+    : null;
+  const agentIdOverride =
+    typeof value.agentIdOverride === "string" && isUuidLike(value.agentIdOverride.trim())
+      ? value.agentIdOverride.trim()
+      : null;
+
+  const config: NonNullable<ProjectWorkspaceRuntimeConfig["githubBridge"]> = {
+    enabled: value.enabled,
+    ...(labelFilter && labelFilter.length > 0 ? { labelFilter } : {}),
+    ...(agentIdOverride ? { agentIdOverride } : {}),
+  };
+
+  return config;
+}
+
 export function readProjectWorkspaceRuntimeConfig(
   metadata: Record<string, unknown> | null | undefined,
 ): ProjectWorkspaceRuntimeConfig | null {
@@ -29,9 +57,14 @@ export function readProjectWorkspaceRuntimeConfig(
     workspaceRuntime: cloneRecord(raw.workspaceRuntime),
     desiredState: readDesiredState(raw.desiredState),
     serviceStates: readServiceStates(raw.serviceStates),
+    githubBridge: readGithubBridge(raw.githubBridge),
   };
 
-  const hasConfig = config.workspaceRuntime !== null || config.desiredState !== null || config.serviceStates !== null;
+  const hasConfig =
+    config.workspaceRuntime !== null ||
+    config.desiredState !== null ||
+    config.serviceStates !== null ||
+    config.githubBridge !== null;
   return hasConfig ? config : null;
 }
 
@@ -44,6 +77,7 @@ export function mergeProjectWorkspaceRuntimeConfig(
     workspaceRuntime: null,
     desiredState: null,
     serviceStates: null,
+    githubBridge: null,
   };
 
   if (patch === null) {
@@ -58,9 +92,16 @@ export function mergeProjectWorkspaceRuntimeConfig(
       patch.desiredState !== undefined ? readDesiredState(patch.desiredState) : current.desiredState,
     serviceStates:
       patch.serviceStates !== undefined ? readServiceStates(patch.serviceStates) : current.serviceStates,
+    githubBridge:
+      patch.githubBridge !== undefined ? readGithubBridge(patch.githubBridge) : current.githubBridge,
   };
 
-  if (nextConfig.workspaceRuntime === null && nextConfig.desiredState === null && nextConfig.serviceStates === null) {
+  if (
+    nextConfig.workspaceRuntime === null &&
+    nextConfig.desiredState === null &&
+    nextConfig.serviceStates === null &&
+    nextConfig.githubBridge === null
+  ) {
     delete nextMetadata.runtimeConfig;
   } else {
     nextMetadata.runtimeConfig = nextConfig;

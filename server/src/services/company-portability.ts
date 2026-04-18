@@ -2256,6 +2256,41 @@ function readCompanyApprovalDefault(_frontmatter: Record<string, unknown>) {
   return true;
 }
 
+function readPortableReviewerSlug(value: unknown) {
+  const slug = normalizeAgentUrlKey(asString(value) ?? "");
+  return slug && slug.length > 0 ? slug : null;
+}
+
+function resolvePortableDefaultReviewerAgentId(
+  sourceCompany: CompanyPortabilityManifest["company"],
+  importedSlugToAgentId: Map<string, string>,
+  existingSlugToAgentId: Map<string, string>,
+  warnings: string[],
+) {
+  if (!sourceCompany) return null;
+
+  if (sourceCompany.defaultReviewerAgentSlug) {
+    const mappedAgentId =
+      importedSlugToAgentId.get(sourceCompany.defaultReviewerAgentSlug)
+      ?? existingSlugToAgentId.get(sourceCompany.defaultReviewerAgentSlug)
+      ?? null;
+    if (!mappedAgentId) {
+      warnings.push(
+        `Default reviewer ${sourceCompany.defaultReviewerAgentSlug} could not be mapped in the target company; reviewer assignment was cleared during import.`,
+      );
+    }
+    return mappedAgentId;
+  }
+
+  if (sourceCompany.defaultReviewerAgentId) {
+    warnings.push(
+      `Package used legacy defaultReviewerAgentId ${sourceCompany.defaultReviewerAgentId}, which is not portable; reviewer assignment was cleared during import.`,
+    );
+  }
+
+  return null;
+}
+
 function readIncludeEntries(frontmatter: Record<string, unknown>): CompanyPackageIncludeEntry[] {
   const includes = frontmatter.includes;
   if (!Array.isArray(includes)) return [];
@@ -2428,6 +2463,19 @@ function buildManifestFromPackageFiles(
       autoHireEnabled:
         typeof paperclipCompany.autoHireEnabled === "boolean"
           ? paperclipCompany.autoHireEnabled
+          : false,
+      defaultHireAdapter: asString(paperclipCompany.defaultHireAdapter),
+      defaultReviewerAgentSlug:
+        readPortableReviewerSlug(paperclipCompany.defaultReviewerAgentSlug)
+        ?? readPortableReviewerSlug(paperclipCompany.defaultReviewer)
+        ?? null,
+      defaultReviewerAgentId:
+        typeof paperclipCompany.defaultReviewerAgentId === "string"
+          ? paperclipCompany.defaultReviewerAgentId
+          : null,
+      autoReviewEnabled:
+        typeof paperclipCompany.autoReviewEnabled === "boolean"
+          ? paperclipCompany.autoReviewEnabled
           : false,
       feedbackDataSharingEnabled:
         typeof paperclipCompany.feedbackDataSharingEnabled === "boolean"
@@ -3456,6 +3504,14 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
     const paperclipRoutines = Object.fromEntries(
       Object.entries(paperclipRoutinesOut).filter(([, value]) => isPlainRecord(value) && Object.keys(value).length > 0),
     );
+    const defaultReviewerAgentSlug = company.defaultReviewerAgentId
+      ? (idToSlug.get(company.defaultReviewerAgentId) ?? null)
+      : null;
+    if (company.defaultReviewerAgentId && !defaultReviewerAgentSlug) {
+      warnings.push(
+        `Company default reviewer ${company.defaultReviewerAgentId} was omitted from export because the referenced agent is not included in this portable package.`,
+      );
+    }
     files[paperclipExtensionPath] = buildYamlFile(
       {
         schema: "paperclip/v1",
@@ -3465,6 +3521,9 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           requireBoardApprovalForNewAgents: company.requireBoardApprovalForNewAgents ? undefined : false,
           codexSandboxLoopbackEnabled: company.codexSandboxLoopbackEnabled ? undefined : false,
           autoHireEnabled: company.autoHireEnabled ? true : undefined,
+          defaultHireAdapter: company.defaultHireAdapter ?? null,
+          defaultReviewerAgentSlug,
+          autoReviewEnabled: company.autoReviewEnabled ? true : undefined,
           feedbackDataSharingEnabled: company.feedbackDataSharingEnabled ? true : undefined,
           feedbackDataSharingConsentAt: company.feedbackDataSharingConsentAt?.toISOString() ?? null,
           feedbackDataSharingConsentByUserId: company.feedbackDataSharingConsentByUserId ?? null,
@@ -3962,6 +4021,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
       id: string;
       name: string;
       requireBoardApprovalForNewAgents?: boolean | null;
+      defaultReviewerAgentId?: string | null;
     } | null = null;
     let companyAction: "created" | "updated" | "unchanged" = "unchanged";
 
@@ -3992,6 +4052,12 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           : true,
         autoHireEnabled: include.company
           ? (sourceManifest.company?.autoHireEnabled ?? false)
+          : false,
+        defaultHireAdapter: include.company
+          ? (sourceManifest.company?.defaultHireAdapter ?? null)
+          : null,
+        autoReviewEnabled: include.company
+          ? (sourceManifest.company?.autoReviewEnabled ?? false)
           : false,
         feedbackDataSharingEnabled: include.company
           ? (sourceManifest.company?.feedbackDataSharingEnabled ?? false)
@@ -4024,6 +4090,8 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           requireBoardApprovalForNewAgents: sourceManifest.company.requireBoardApprovalForNewAgents,
           codexSandboxLoopbackEnabled: sourceManifest.company.codexSandboxLoopbackEnabled,
           autoHireEnabled: sourceManifest.company.autoHireEnabled,
+          defaultHireAdapter: sourceManifest.company.defaultHireAdapter,
+          autoReviewEnabled: sourceManifest.company.autoReviewEnabled,
           feedbackDataSharingEnabled: sourceManifest.company.feedbackDataSharingEnabled,
           feedbackDataSharingConsentAt: sourceManifest.company.feedbackDataSharingConsentAt
             ? new Date(sourceManifest.company.feedbackDataSharingConsentAt)
@@ -4353,6 +4421,32 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           warnings.push(`Could not assign manager ${managerSlug} for imported agent ${manifestAgent.slug}.`);
         }
       }
+
+      if (include.company && sourceManifest.company) {
+        const resolvedDefaultReviewerAgentId = resolvePortableDefaultReviewerAgentId(
+          sourceManifest.company,
+          importedSlugToAgentId,
+          existingSlugToAgentId,
+          warnings,
+        );
+        const updatedCompany = await companies.update(targetCompany.id, {
+          defaultReviewerAgentId: resolvedDefaultReviewerAgentId,
+        });
+        targetCompany = updatedCompany ?? targetCompany;
+      }
+    }
+
+    if (!include.agents && include.company && sourceManifest.company) {
+      const resolvedDefaultReviewerAgentId = resolvePortableDefaultReviewerAgentId(
+        sourceManifest.company,
+        importedSlugToAgentId,
+        existingSlugToAgentId,
+        warnings,
+      );
+      const updatedCompany = await companies.update(targetCompany.id, {
+        defaultReviewerAgentId: resolvedDefaultReviewerAgentId,
+      });
+      targetCompany = updatedCompany ?? targetCompany;
     }
 
     if (include.projects) {

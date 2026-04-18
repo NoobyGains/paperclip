@@ -1335,10 +1335,12 @@ export function issueRoutes(
     }
 
     const actor = getActorInfo(req);
+    const executionPolicyProvided = Object.prototype.hasOwnProperty.call(req.body, "executionPolicy");
     const executionPolicy = normalizeIssueExecutionPolicy(req.body.executionPolicy);
     const issue = await svc.create(companyId, {
       ...req.body,
       executionPolicy,
+      executionPolicyProvided,
       createdByAgentId: actor.agentId,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
     });

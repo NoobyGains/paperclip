@@ -140,11 +140,16 @@ describe("company portability", () => {
       logoAssetId: null,
       logoUrl: null,
       requireBoardApprovalForNewAgents: true,
+      autoHireEnabled: false,
+      defaultHireAdapter: null,
+      defaultReviewerAgentId: null,
+      autoReviewEnabled: false,
     });
     companySvc.create.mockResolvedValue({
       id: "company-imported",
       name: "Imported Paperclip",
       requireBoardApprovalForNewAgents: true,
+      defaultReviewerAgentId: null,
     });
     agentSvc.list.mockResolvedValue([
       {
@@ -2823,6 +2828,323 @@ describe("company portability", () => {
     expect(exported.manifest.company?.codexSandboxLoopbackEnabled).toBe(true);
     const extension = asTextFile(exported.files[".paperclip.yaml"]);
     expect(extension).not.toContain("codexSandboxLoopbackEnabled");
+  });
+
+  it("exports company hire and review defaults with a portable reviewer slug", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    companySvc.getById.mockResolvedValue({
+      id: "company-1",
+      name: "Paperclip",
+      description: null,
+      issuePrefix: "PAP",
+      brandColor: "#5c5fff",
+      logoAssetId: null,
+      logoUrl: null,
+      requireBoardApprovalForNewAgents: true,
+      codexSandboxLoopbackEnabled: true,
+      autoHireEnabled: true,
+      defaultHireAdapter: "codex_local",
+      defaultReviewerAgentId: "agent-2",
+      autoReviewEnabled: true,
+    });
+
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+    });
+
+    expect(exported.manifest.company?.autoHireEnabled).toBe(true);
+    expect(exported.manifest.company?.defaultHireAdapter).toBe("codex_local");
+    expect(exported.manifest.company?.defaultReviewerAgentSlug).toBe("cmo");
+    expect(exported.manifest.company?.defaultReviewerAgentId).toBeNull();
+    expect(exported.manifest.company?.autoReviewEnabled).toBe(true);
+
+    const extension = asTextFile(exported.files[".paperclip.yaml"]);
+    expect(extension).toContain('defaultHireAdapter: "codex_local"');
+    expect(extension).toContain('defaultReviewerAgentSlug: "cmo"');
+    expect(extension).toContain("autoReviewEnabled: true");
+  });
+
+  it("remaps the default reviewer when importing into a new company", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    companySvc.getById.mockResolvedValue({
+      id: "company-1",
+      name: "Paperclip",
+      description: null,
+      issuePrefix: "PAP",
+      brandColor: "#5c5fff",
+      logoAssetId: null,
+      logoUrl: null,
+      requireBoardApprovalForNewAgents: true,
+      codexSandboxLoopbackEnabled: true,
+      autoHireEnabled: true,
+      defaultHireAdapter: "codex_local",
+      defaultReviewerAgentId: "agent-2",
+      autoReviewEnabled: true,
+    });
+
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+    });
+
+    companySvc.create.mockResolvedValueOnce({
+      id: "company-imported",
+      name: "Imported Paperclip",
+      defaultReviewerAgentId: null,
+    });
+    companySvc.update.mockImplementation(async (id: string, patch: Record<string, unknown>) => ({
+      id,
+      name: "Imported Paperclip",
+      ...patch,
+    }));
+    accessSvc.ensureMembership.mockResolvedValue(undefined);
+    agentSvc.list.mockResolvedValue([]);
+    agentSvc.create.mockImplementation(async (_companyId: string, input: Record<string, unknown>) => ({
+      id: String(input.name) === "CMO" ? "agent-created-cmo" : "agent-created-claudecoder",
+      name: String(input.name),
+      adapterType: input.adapterType,
+      adapterConfig: input.adapterConfig,
+      status: input.status,
+    }));
+    agentSvc.update.mockImplementation(async (id: string, patch: Record<string, unknown>) => ({
+      id,
+      name: id === "agent-created-cmo" ? "CMO" : "ClaudeCoder",
+      adapterType: patch.adapterType ?? "claude_local",
+      adapterConfig: patch.adapterConfig ?? {},
+      status: patch.status ?? "pending_approval",
+    }));
+
+    await portability.importBundle({
+      source: {
+        type: "inline",
+        rootPath: exported.rootPath,
+        files: exported.files,
+      },
+      include: {
+        company: true,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+      target: {
+        mode: "new_company",
+        newCompanyName: "Imported Paperclip",
+      },
+      agents: "all",
+      collisionStrategy: "rename",
+    }, "user-1");
+
+    expect(companySvc.create).toHaveBeenCalledWith(expect.objectContaining({
+      autoHireEnabled: true,
+      defaultHireAdapter: "codex_local",
+      autoReviewEnabled: true,
+    }));
+    const reviewerUpdate = companySvc.update.mock.calls.find(([, patch]) =>
+      (patch as Record<string, unknown>).defaultReviewerAgentId !== undefined,
+    );
+    expect(reviewerUpdate?.[1]).toEqual(expect.objectContaining({
+      defaultReviewerAgentId: "agent-created-cmo",
+    }));
+  });
+
+  it("remaps the default reviewer to an existing agent on existing-company imports", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    companySvc.getById.mockResolvedValue({
+      id: "company-1",
+      name: "Paperclip",
+      description: null,
+      issuePrefix: "PAP",
+      brandColor: "#5c5fff",
+      logoAssetId: null,
+      logoUrl: null,
+      requireBoardApprovalForNewAgents: true,
+      codexSandboxLoopbackEnabled: true,
+      autoHireEnabled: true,
+      defaultHireAdapter: "codex_local",
+      defaultReviewerAgentId: "agent-2",
+      autoReviewEnabled: true,
+    });
+
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+    });
+
+    companySvc.getById.mockImplementation(async (id: string) => {
+      if (id === "company-target") {
+        return {
+          id: "company-target",
+          name: "Target Company",
+          description: null,
+          issuePrefix: "TGT",
+          brandColor: null,
+          logoAssetId: null,
+          logoUrl: null,
+          requireBoardApprovalForNewAgents: true,
+          defaultReviewerAgentId: "agent-target-old",
+        };
+      }
+      return {
+        id: "company-1",
+        name: "Paperclip",
+        description: null,
+        issuePrefix: "PAP",
+        brandColor: "#5c5fff",
+        logoAssetId: null,
+        logoUrl: null,
+        requireBoardApprovalForNewAgents: true,
+        codexSandboxLoopbackEnabled: true,
+        autoHireEnabled: true,
+        defaultHireAdapter: "codex_local",
+        defaultReviewerAgentId: "agent-2",
+        autoReviewEnabled: true,
+      };
+    });
+    companySvc.update.mockImplementation(async (id: string, patch: Record<string, unknown>) => ({
+      id,
+      name: "Target Company",
+      ...patch,
+    }));
+    agentSvc.list.mockResolvedValue([
+      {
+        id: "agent-target-claudecoder",
+        name: "ClaudeCoder",
+        status: "idle",
+      },
+      {
+        id: "agent-target-cmo",
+        name: "CMO",
+        status: "idle",
+      },
+    ]);
+
+    await portability.importBundle({
+      source: {
+        type: "inline",
+        rootPath: exported.rootPath,
+        files: exported.files,
+      },
+      include: {
+        company: true,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+      target: {
+        mode: "existing_company",
+        companyId: "company-target",
+      },
+      agents: "all",
+      collisionStrategy: "skip",
+    }, "user-1");
+
+    expect(agentSvc.create).not.toHaveBeenCalled();
+    const companyPatchUpdate = companySvc.update.mock.calls.find(([, patch]) =>
+      (patch as Record<string, unknown>).defaultHireAdapter !== undefined,
+    );
+    expect(companyPatchUpdate?.[1]).toEqual(expect.objectContaining({
+      autoHireEnabled: true,
+      defaultHireAdapter: "codex_local",
+      autoReviewEnabled: true,
+    }));
+    const reviewerUpdate = companySvc.update.mock.calls.find(([, patch]) =>
+      (patch as Record<string, unknown>).defaultReviewerAgentId === "agent-target-cmo",
+    );
+    expect(reviewerUpdate?.[1]).toEqual(expect.objectContaining({
+      defaultReviewerAgentId: "agent-target-cmo",
+    }));
+  });
+
+  it("clears a legacy default reviewer UUID when the package has no portable reviewer slug", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    companySvc.getById.mockResolvedValue({
+      id: "company-1",
+      name: "Paperclip",
+      description: null,
+      issuePrefix: "PAP",
+      brandColor: "#5c5fff",
+      logoAssetId: null,
+      logoUrl: null,
+      requireBoardApprovalForNewAgents: true,
+      codexSandboxLoopbackEnabled: true,
+      autoHireEnabled: true,
+      defaultHireAdapter: "codex_local",
+      defaultReviewerAgentId: "agent-2",
+      autoReviewEnabled: true,
+    });
+
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+    });
+
+    const legacyExtension = asTextFile(exported.files[".paperclip.yaml"])
+      .replace(/defaultReviewerAgentSlug: "cmo"/, 'defaultReviewerAgentId: "11111111-1111-1111-1111-111111111111"');
+
+    companySvc.create.mockResolvedValueOnce({
+      id: "company-imported",
+      name: "Imported Paperclip",
+      defaultReviewerAgentId: null,
+    });
+    companySvc.update.mockImplementation(async (id: string, patch: Record<string, unknown>) => ({
+      id,
+      name: "Imported Paperclip",
+      ...patch,
+    }));
+
+    const imported = await portability.importBundle({
+      source: {
+        type: "inline",
+        rootPath: exported.rootPath,
+        files: {
+          ...exported.files,
+          ".paperclip.yaml": legacyExtension,
+        },
+      },
+      include: {
+        company: true,
+        agents: false,
+        projects: false,
+        issues: false,
+      },
+      target: {
+        mode: "new_company",
+        newCompanyName: "Imported Paperclip",
+      },
+      agents: "all",
+      collisionStrategy: "rename",
+    }, "user-1");
+
+    const reviewerUpdate = companySvc.update.mock.calls.find(([, patch]) =>
+      (patch as Record<string, unknown>).defaultReviewerAgentId !== undefined,
+    );
+    expect(reviewerUpdate?.[1]).toEqual(expect.objectContaining({
+      defaultReviewerAgentId: null,
+    }));
+    expect(imported.warnings).toContain(
+      'Package used legacy defaultReviewerAgentId 11111111-1111-1111-1111-111111111111, which is not portable; reviewer assignment was cleared during import.',
+    );
   });
 
   // Fork Issue #3 regression: when batch-importing a claude_local agent,

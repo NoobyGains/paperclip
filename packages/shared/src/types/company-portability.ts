@@ -38,6 +38,7 @@ export interface CompanyPortabilityCompanyManifestEntry {
   codexSandboxLoopbackEnabled: boolean;
   autoHireEnabled: boolean;
   defaultHireAdapter: string | null;
+  defaultReviewerAgentSlug: string | null;
   defaultReviewerAgentId: string | null;
   autoReviewEnabled: boolean;
   feedbackDataSharingEnabled: boolean;

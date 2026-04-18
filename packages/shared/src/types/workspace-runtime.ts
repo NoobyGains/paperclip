@@ -90,6 +90,11 @@ export interface ProjectWorkspaceRuntimeConfig {
   workspaceRuntime: Record<string, unknown> | null;
   desiredState: WorkspaceRuntimeDesiredState | null;
   serviceStates?: WorkspaceRuntimeServiceStateMap | null;
+  githubBridge?: {
+    enabled: boolean;
+    labelFilter?: string[] | null;
+    agentIdOverride?: string | null;
+  } | null;
 }
 
 export interface WorkspaceRuntimeControlTarget {

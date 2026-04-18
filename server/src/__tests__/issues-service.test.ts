@@ -1494,6 +1494,278 @@ describeEmbeddedPostgres("issueService.create workspace inheritance", () => {
   });
 });
 
+describeEmbeddedPostgres("issueService.create auto review defaults", () => {
+  let db!: ReturnType<typeof createDb>;
+  let svc!: ReturnType<typeof issueService>;
+  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+
+  beforeAll(async () => {
+    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-issues-auto-review-");
+    db = createDb(tempDb.connectionString);
+    svc = issueService(db);
+    await ensureIssueRelationsTable(db);
+  }, 20_000);
+
+  afterEach(async () => {
+    await db.delete(issueComments);
+    await db.delete(issueRelations);
+    await db.delete(issueInboxArchives);
+    await db.delete(activityLog);
+    await db.delete(issues);
+    await db.delete(executionWorkspaces);
+    await db.delete(projectWorkspaces);
+    await db.delete(projects);
+    await db.delete(agents);
+    await db.delete(instanceSettings);
+    await db.delete(companies);
+  });
+
+  afterAll(async () => {
+    await tempDb?.cleanup();
+  });
+
+  async function seedCompanyWithAgents(input?: {
+    autoReviewEnabled?: boolean;
+    defaultReviewerAgentId?: string | null;
+  }) {
+    const companyId = randomUUID();
+    const assigneeId = randomUUID();
+    const reviewerId = randomUUID();
+    const fallbackReviewerId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+      autoReviewEnabled: input?.autoReviewEnabled ?? false,
+      defaultReviewerAgentId: input?.defaultReviewerAgentId ?? null,
+    });
+
+    await db.insert(agents).values([
+      {
+        id: assigneeId,
+        companyId,
+        name: "Builder",
+        role: "engineer",
+        status: "active",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: reviewerId,
+        companyId,
+        name: "Designated Reviewer",
+        role: "reviewer",
+        status: "active",
+        adapterType: "claude_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: fallbackReviewerId,
+        companyId,
+        name: "Fallback Reviewer",
+        role: "engineer",
+        status: "active",
+        adapterType: "claude_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]);
+
+    return { companyId, assigneeId, reviewerId, fallbackReviewerId };
+  }
+
+  it("keeps issue executionPolicy empty when auto review is disabled", async () => {
+    const { companyId, assigneeId } = await seedCompanyWithAgents();
+
+    const issue = await svc.create(companyId, {
+      title: "No auto review",
+      assigneeAgentId: assigneeId,
+    });
+
+    expect(issue.executionPolicy ?? null).toBeNull();
+  });
+
+  it("attaches the designated reviewer when auto review is enabled", async () => {
+    const { companyId, assigneeId, reviewerId } = await seedCompanyWithAgents({
+      autoReviewEnabled: true,
+    });
+    await db
+      .update(companies)
+      .set({ defaultReviewerAgentId: reviewerId })
+      .where(eq(companies.id, companyId));
+
+    const issue = await svc.create(companyId, {
+      title: "Needs review",
+      assigneeAgentId: assigneeId,
+    });
+
+    expect(issue.executionPolicy).toBeTruthy();
+    expect(issue.executionPolicy?.stages).toHaveLength(1);
+    expect(issue.executionPolicy?.stages[0]?.type).toBe("review");
+    expect(issue.executionPolicy?.stages[0]?.participants).toEqual([
+      expect.objectContaining({
+        type: "agent",
+        agentId: reviewerId,
+      }),
+    ]);
+  });
+
+  it("falls back deterministically when the designated reviewer is the assignee", async () => {
+    const { companyId, assigneeId, reviewerId } = await seedCompanyWithAgents({
+      autoReviewEnabled: true,
+    });
+    await db
+      .update(companies)
+      .set({ defaultReviewerAgentId: assigneeId })
+      .where(eq(companies.id, companyId));
+
+    const issue = await svc.create(companyId, {
+      title: "Needs fallback reviewer",
+      assigneeAgentId: assigneeId,
+    });
+
+    expect(issue.executionPolicy?.stages[0]?.participants).toEqual([
+      expect.objectContaining({
+        type: "agent",
+        agentId: reviewerId,
+      }),
+    ]);
+  });
+
+  it("falls back to another eligible reviewer when the designated reviewer is unavailable", async () => {
+    const { companyId, assigneeId, reviewerId, fallbackReviewerId } = await seedCompanyWithAgents({
+      autoReviewEnabled: true,
+    });
+    await db
+      .update(companies)
+      .set({ defaultReviewerAgentId: reviewerId })
+      .where(eq(companies.id, companyId));
+
+    await db
+      .update(agents)
+      .set({ status: "terminated" })
+      .where(eq(agents.id, reviewerId));
+
+    const issue = await svc.create(companyId, {
+      title: "Needs fallback reviewer",
+      assigneeAgentId: assigneeId,
+    });
+
+    expect(issue.executionPolicy?.stages[0]?.participants).toEqual([
+      expect.objectContaining({
+        type: "agent",
+        agentId: fallbackReviewerId,
+      }),
+    ]);
+  });
+
+  it("respects an explicit executionPolicy payload and skips auto review", async () => {
+    const { companyId, assigneeId, reviewerId } = await seedCompanyWithAgents({
+      autoReviewEnabled: true,
+    });
+    await db
+      .update(companies)
+      .set({ defaultReviewerAgentId: reviewerId })
+      .where(eq(companies.id, companyId));
+
+    const issue = await svc.create(companyId, {
+      title: "Manual policy wins",
+      assigneeAgentId: assigneeId,
+      executionPolicyProvided: true,
+      executionPolicy: {
+        mode: "normal",
+        commentRequired: true,
+        stages: [],
+      },
+    });
+
+    expect(issue.executionPolicy).toEqual({
+      mode: "normal",
+      commentRequired: true,
+      stages: [],
+    });
+  });
+
+  it("can auto-pick a reviewer for unassigned backlog issues", async () => {
+    const { companyId, reviewerId } = await seedCompanyWithAgents({
+      autoReviewEnabled: true,
+      defaultReviewerAgentId: null,
+    });
+
+    const issue = await svc.create(companyId, {
+      title: "Backlog issue",
+      status: "backlog",
+    });
+
+    expect(issue.executionPolicy?.stages[0]?.participants).toEqual([
+      expect.objectContaining({
+        type: "agent",
+        agentId: reviewerId,
+      }),
+    ]);
+  });
+
+  it("fails loudly when auto review is enabled and no eligible reviewer exists", async () => {
+    const companyId = randomUUID();
+    const assigneeId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+      autoReviewEnabled: true,
+      defaultReviewerAgentId: null,
+    });
+
+    await db.insert(agents).values([
+      {
+        id: assigneeId,
+        companyId,
+        name: "Builder",
+        role: "engineer",
+        status: "active",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: randomUUID(),
+        companyId,
+        name: "Same Adapter Reviewer",
+        role: "reviewer",
+        status: "active",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]);
+
+    await db
+      .update(companies)
+      .set({ defaultReviewerAgentId: assigneeId })
+      .where(eq(companies.id, companyId));
+
+    await expect(
+      svc.create(companyId, {
+        title: "No eligible reviewer",
+        assigneeAgentId: assigneeId,
+      }),
+    ).rejects.toThrow(
+      "auto-review is on but no eligible reviewer is available; designate one in company settings or disable auto-review",
+    );
+  });
+});
+
 describeEmbeddedPostgres("issueService.findMentionedProjectIds", () => {
   let db!: ReturnType<typeof createDb>;
   let svc!: ReturnType<typeof issueService>;

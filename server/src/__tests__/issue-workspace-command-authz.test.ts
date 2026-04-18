@@ -135,6 +135,49 @@ describe("issue workspace command authorization", () => {
     expect(mockIssueService.create).not.toHaveBeenCalled();
   });
 
+  it("marks executionPolicy as explicit on issue create when the request includes it", async () => {
+    const app = createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      companyIds: ["company-1"],
+    });
+
+    const executionPolicy = {
+      mode: "normal",
+      commentRequired: true,
+      stages: [
+        {
+          type: "review",
+          approvalsNeeded: 1,
+          participants: [{ type: "agent", agentId: "11111111-1111-4111-8111-111111111111" }],
+        },
+      ],
+    };
+
+    const res = await request(app)
+      .post("/api/companies/company-1/issues")
+      .send({
+        title: "Respect explicit policy",
+        executionPolicy,
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.create).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({
+        executionPolicyProvided: true,
+        executionPolicy: expect.objectContaining({
+          stages: expect.arrayContaining([
+            expect.objectContaining({
+              type: "review",
+            }),
+          ]),
+        }),
+      }),
+    );
+  });
+
   it("rejects agent callers that patch assignee adapter workspace teardown commands", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue());
     const app = createApp({

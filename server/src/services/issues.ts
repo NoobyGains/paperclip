@@ -31,6 +31,7 @@ import {
   issueExecutionWorkspaceModeForPersistedWorkspace,
   parseProjectExecutionWorkspacePolicy,
 } from "./execution-workspace-policy.js";
+import { normalizeIssueExecutionPolicy } from "./issue-execution-policy.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
@@ -120,6 +121,7 @@ type IssueCreateInput = Omit<typeof issues.$inferInsert, "companyId"> & {
   labelIds?: string[];
   blockedByIssueIds?: string[];
   inheritExecutionWorkspaceFromIssueId?: string | null;
+  executionPolicyProvided?: boolean;
 };
 type IssueRelationSummaryMap = {
   blockedBy: IssueRelationIssueSummary[];
@@ -133,6 +135,7 @@ function sameRunLock(checkoutRunId: string | null, actorRunId: string | null) {
 
 const TERMINAL_HEARTBEAT_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
 const ISSUE_LIST_DESCRIPTION_MAX_CHARS = 1200;
+const AUTO_REVIEW_ELIGIBLE_AGENT_STATUSES = ["active", "idle", "running"] as const;
 
 function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, "\\$&");
@@ -557,6 +560,7 @@ const issueListSelect = {
   originKind: issues.originKind,
   originId: issues.originId,
   originRunId: issues.originRunId,
+  metadata: issues.metadata,
   requestDepth: issues.requestDepth,
   billingCode: issues.billingCode,
   assigneeAdapterOverrides: issues.assigneeAdapterOverrides,
@@ -654,6 +658,108 @@ export function issueService(db: Db) {
     if (!membership) {
       throw notFound("Assignee user not found");
     }
+  }
+
+  async function buildAutoReviewExecutionPolicy(
+    companyId: string,
+    input: {
+      assigneeAgentId?: string | null;
+      executionPolicy?: typeof issues.$inferInsert["executionPolicy"];
+      executionPolicyProvided?: boolean;
+    },
+    dbOrTx: any = db,
+  ) {
+    if (input.executionPolicyProvided) {
+      return input.executionPolicy ?? null;
+    }
+
+    const company = await dbOrTx
+      .select({
+        autoReviewEnabled: companies.autoReviewEnabled,
+        defaultReviewerAgentId: companies.defaultReviewerAgentId,
+      })
+      .from(companies)
+      .where(eq(companies.id, companyId))
+      .then((rows: Array<{ autoReviewEnabled: boolean; defaultReviewerAgentId: string | null }>) => rows[0] ?? null);
+    if (!company?.autoReviewEnabled) {
+      return input.executionPolicy ?? null;
+    }
+
+    const assigneeAgentId = input.assigneeAgentId ?? null;
+    const assigneeAdapterType = assigneeAgentId
+      ? await dbOrTx
+        .select({ adapterType: agents.adapterType })
+        .from(agents)
+        .where(and(eq(agents.id, assigneeAgentId), eq(agents.companyId, companyId)))
+        .then((rows: Array<{ adapterType: string | null }>) => rows[0]?.adapterType ?? null)
+      : null;
+
+    const designatedReviewer = company.defaultReviewerAgentId
+      ? await dbOrTx
+        .select({
+          id: agents.id,
+          adapterType: agents.adapterType,
+          status: agents.status,
+        })
+        .from(agents)
+        .where(and(eq(agents.id, company.defaultReviewerAgentId), eq(agents.companyId, companyId)))
+        .then((rows: Array<{ id: string; adapterType: string | null; status: string }>) => rows[0] ?? null)
+      : null;
+
+    let reviewerId: string | null = null;
+    if (
+      designatedReviewer
+      && AUTO_REVIEW_ELIGIBLE_AGENT_STATUSES.includes(
+        designatedReviewer.status as (typeof AUTO_REVIEW_ELIGIBLE_AGENT_STATUSES)[number],
+      )
+      && designatedReviewer.id !== assigneeAgentId
+    ) {
+      reviewerId = designatedReviewer.id;
+    }
+
+    if (!reviewerId) {
+      const fallbackConditions = [
+        eq(agents.companyId, companyId),
+        inArray(agents.status, [...AUTO_REVIEW_ELIGIBLE_AGENT_STATUSES]),
+      ];
+      if (assigneeAgentId) {
+        fallbackConditions.push(ne(agents.id, assigneeAgentId));
+      }
+      if (assigneeAdapterType) {
+        fallbackConditions.push(ne(agents.adapterType, assigneeAdapterType));
+      }
+      const eligibleFallback = await dbOrTx
+        .select({
+          id: agents.id,
+        })
+        .from(agents)
+        .where(and(...fallbackConditions))
+        .orderBy(
+          sql`CASE WHEN ${agents.role} = 'reviewer' THEN 0 ELSE 1 END`,
+          asc(agents.createdAt),
+          asc(agents.id),
+        )
+        .then((rows: Array<{ id: string }>) => rows[0] ?? null);
+      reviewerId = eligibleFallback?.id ?? null;
+    }
+
+    if (!reviewerId) {
+      throw unprocessable(
+        "auto-review is on but no eligible reviewer is available; designate one in company settings or disable auto-review",
+      );
+    }
+
+    return normalizeIssueExecutionPolicy({
+      mode: "normal",
+      commentRequired: true,
+      stages: [
+        {
+          type: "review",
+          approvalsNeeded: 1,
+          participants: [{ type: "agent", agentId: reviewerId }],
+        },
+      ],
+    });
   }
 
   async function assertValidProjectWorkspace(
@@ -1429,6 +1535,7 @@ export function issueService(db: Db) {
         labelIds: inputLabelIds,
         blockedByIssueIds,
         inheritExecutionWorkspaceFromIssueId,
+        executionPolicyProvided,
         ...issueData
       } = data;
       const isolatedWorkspacesEnabled = (await instanceSettings.getExperimental()).enableIsolatedWorkspaces;
@@ -1554,6 +1661,15 @@ export function issueService(db: Db) {
 
         const values = {
           ...issueData,
+          executionPolicy: await buildAutoReviewExecutionPolicy(
+            companyId,
+            {
+              assigneeAgentId: issueData.assigneeAgentId ?? null,
+              executionPolicy: issueData.executionPolicy,
+              executionPolicyProvided,
+            },
+            tx,
+          ),
           originKind: issueData.originKind ?? "manual",
           goalId: resolveIssueGoalId({
             projectId: issueData.projectId,

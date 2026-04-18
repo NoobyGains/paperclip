@@ -118,23 +118,27 @@ function registerModuleMocks() {
   }));
 }
 
-function createDbStub() {
+function createDbStub(companyOverrides: Record<string, unknown> = {}) {
+  const companyRow = {
+    id: companyId,
+    name: "Paperclip",
+    requireBoardApprovalForNewAgents: false,
+    defaultHireAdapter: null,
+    ...companyOverrides,
+  };
   return {
     select: vi.fn().mockReturnValue({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
-          then: vi.fn().mockResolvedValue([{
-            id: companyId,
-            name: "Paperclip",
-            requireBoardApprovalForNewAgents: false,
-          }]),
+          then: vi.fn((mapFn?: (rows: Array<typeof companyRow>) => unknown) =>
+            Promise.resolve(typeof mapFn === "function" ? mapFn([companyRow]) : [companyRow])),
         }),
       }),
     }),
   };
 }
 
-async function createApp(actor: Record<string, unknown>) {
+async function createApp(actor: Record<string, unknown>, dbStub = createDbStub()) {
   const [{ errorHandler }, { agentRoutes }] = await Promise.all([
     vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
     vi.importActual<typeof import("../routes/agents.js")>("../routes/agents.js"),
@@ -145,7 +149,7 @@ async function createApp(actor: Record<string, unknown>) {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", agentRoutes(createDbStub() as any));
+  app.use("/api", agentRoutes(dbStub as any));
   app.use(errorHandler);
   return app;
 }
@@ -166,7 +170,15 @@ describe("agent permission routes", () => {
     mockAgentService.list.mockResolvedValue([baseAgent]);
     mockAgentService.getChainOfCommand.mockResolvedValue([]);
     mockAgentService.resolveByReference.mockResolvedValue({ ambiguous: false, agent: baseAgent });
-    mockAgentService.create.mockResolvedValue(baseAgent);
+    mockAgentService.create.mockImplementation(async (_companyId, input) => ({
+      ...baseAgent,
+      ...input,
+      adapterType: input.adapterType ?? baseAgent.adapterType,
+      adapterConfig: input.adapterConfig ?? {},
+      runtimeConfig: input.runtimeConfig ?? {},
+      permissions: input.permissions ?? baseAgent.permissions,
+      metadata: input.metadata ?? null,
+    }));
     mockAgentService.update.mockResolvedValue(baseAgent);
     mockAgentService.updatePermissions.mockResolvedValue(baseAgent);
     mockAccessService.getMembership.mockResolvedValue({
@@ -559,6 +571,142 @@ describe("agent permission routes", () => {
             intervalSec: 3600,
           },
         },
+      }),
+    );
+  });
+
+  it("uses company.defaultHireAdapter when a direct agent create omits adapterType", async () => {
+    const app = await createApp(
+      {
+        type: "board",
+        userId: "board-user",
+        source: "local_implicit",
+        isInstanceAdmin: true,
+        companyIds: [companyId],
+      },
+      createDbStub({ defaultHireAdapter: "process" }),
+    );
+
+    const res = await request(app)
+      .post(`/api/companies/${companyId}/agents`)
+      .send({
+        name: "Builder",
+        role: "engineer",
+        adapterConfig: {},
+      });
+
+    expect([200, 201]).toContain(res.status);
+    expect(mockAgentService.create).toHaveBeenCalledWith(
+      companyId,
+      expect.objectContaining({
+        adapterType: "process",
+      }),
+    );
+  });
+
+  it("uses company.defaultHireAdapter when an agent hire omits adapterType", async () => {
+    const app = await createApp(
+      {
+        type: "board",
+        userId: "board-user",
+        source: "local_implicit",
+        isInstanceAdmin: true,
+        companyIds: [companyId],
+      },
+      createDbStub({ defaultHireAdapter: "process" }),
+    );
+
+    const res = await request(app)
+      .post(`/api/companies/${companyId}/agent-hires`)
+      .send({
+        name: "Builder",
+        role: "engineer",
+        adapterConfig: {},
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockAgentService.create).toHaveBeenCalledWith(
+      companyId,
+      expect.objectContaining({
+        adapterType: "process",
+      }),
+    );
+  });
+
+  it("fails clearly when no adapterType is supplied and the company has no default", async () => {
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await request(app)
+      .post(`/api/companies/${companyId}/agent-hires`)
+      .send({
+        name: "Builder",
+        role: "engineer",
+        adapterConfig: {},
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe(
+      "adapterType is required: neither passed in the payload nor configured as company.defaultHireAdapter. Set one in company settings or include adapterType in the request.",
+    );
+    expect(mockAgentService.create).not.toHaveBeenCalled();
+  });
+
+  it("fails direct agent creation when no adapterType is supplied and the company has no default", async () => {
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await request(app)
+      .post(`/api/companies/${companyId}/agents`)
+      .send({
+        name: "Builder",
+        role: "engineer",
+        adapterConfig: {},
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe(
+      "adapterType is required: neither passed in the payload nor configured as company.defaultHireAdapter. Set one in company settings or include adapterType in the request.",
+    );
+    expect(mockAgentService.create).not.toHaveBeenCalled();
+  });
+
+  it("prefers an explicit adapterType over company.defaultHireAdapter", async () => {
+    const app = await createApp(
+      {
+        type: "board",
+        userId: "board-user",
+        source: "local_implicit",
+        isInstanceAdmin: true,
+        companyIds: [companyId],
+      },
+      createDbStub({ defaultHireAdapter: "claude_local" }),
+    );
+
+    const res = await request(app)
+      .post(`/api/companies/${companyId}/agent-hires`)
+      .send({
+        name: "Builder",
+        role: "engineer",
+        adapterType: "process",
+        adapterConfig: {},
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockAgentService.create).toHaveBeenCalledWith(
+      companyId,
+      expect.objectContaining({
+        adapterType: "process",
       }),
     );
   });

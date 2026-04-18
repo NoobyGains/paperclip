@@ -1,11 +1,13 @@
-import { ChangeEvent, useEffect, useState } from "react";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { Link } from "@/lib/router";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DEFAULT_FEEDBACK_DATA_SHARING_TERMS_VERSION } from "@paperclipai/shared";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToastActions } from "../context/ToastContext";
 import { companiesApi } from "../api/companies";
+import { adaptersApi } from "../api/adapters";
+import { agentsApi } from "../api/agents";
 import { accessApi } from "../api/access";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
@@ -42,6 +44,22 @@ export function CompanySettings() {
   const [brandColor, setBrandColor] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
   const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
+  const [defaultHireAdapter, setDefaultHireAdapter] = useState("");
+  const [autoReviewEnabled, setAutoReviewEnabled] = useState(false);
+  const [defaultReviewerAgentId, setDefaultReviewerAgentId] = useState("");
+  const automationSaveTimerRef = useRef<number | null>(null);
+
+  const { data: adapters = [] } = useQuery({
+    queryKey: queryKeys.adapters.all,
+    queryFn: () => adaptersApi.list(),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: agents = [] } = useQuery({
+    queryKey: selectedCompanyId ? queryKeys.agents.list(selectedCompanyId) : ["agents", "none"],
+    queryFn: () => agentsApi.list(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
 
   // Sync local state from selected company
   useEffect(() => {
@@ -50,6 +68,9 @@ export function CompanySettings() {
     setDescription(selectedCompany.description ?? "");
     setBrandColor(selectedCompany.brandColor ?? "");
     setLogoUrl(selectedCompany.logoUrl ?? "");
+    setDefaultHireAdapter(selectedCompany.defaultHireAdapter ?? "");
+    setAutoReviewEnabled(!!selectedCompany.autoReviewEnabled);
+    setDefaultReviewerAgentId(selectedCompany.defaultReviewerAgentId ?? "");
   }, [selectedCompany]);
 
   const [inviteError, setInviteError] = useState<string | null>(null);
@@ -62,6 +83,38 @@ export function CompanySettings() {
     (companyName !== selectedCompany.name ||
       description !== (selectedCompany.description ?? "") ||
       brandColor !== (selectedCompany.brandColor ?? ""));
+
+  const enabledAdapterOptions = adapters
+    .filter((adapter) => adapter.loaded && !adapter.disabled)
+    .map((adapter) => ({
+      value: adapter.type,
+      label: adapter.label,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  const availableReviewerOptions = agents
+    .filter((agent) => agent.status !== "terminated")
+    .map((agent) => ({
+      value: agent.id,
+      label:
+        agent.status === "active"
+          ? `${agent.name}${agent.title ? ` (${agent.title})` : ""}`
+          : `${agent.name}${agent.title ? ` (${agent.title})` : ""} [${agent.status}]`,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  const selectedHireAdapterAvailable = enabledAdapterOptions.some(
+    (adapter) => adapter.value === defaultHireAdapter,
+  );
+  const selectedReviewerAvailable = availableReviewerOptions.some(
+    (agent) => agent.value === defaultReviewerAgentId,
+  );
+
+  const automationDirty =
+    !!selectedCompany &&
+    (defaultHireAdapter !== (selectedCompany.defaultHireAdapter ?? "")
+      || autoReviewEnabled !== !!selectedCompany.autoReviewEnabled
+      || defaultReviewerAgentId !== (selectedCompany.defaultReviewerAgentId ?? ""));
 
   const generalMutation = useMutation({
     mutationFn: (data: {
@@ -82,6 +135,25 @@ export function CompanySettings() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
     }
+  });
+
+  const automationMutation = useMutation({
+    mutationFn: (data: {
+      defaultHireAdapter: string | null;
+      autoReviewEnabled: boolean;
+      defaultReviewerAgentId: string | null;
+    }) => companiesApi.update(selectedCompanyId!, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
+      pushToast({ title: "Automation settings updated", tone: "success" });
+    },
+    onError: (err) => {
+      pushToast({
+        title: "Failed to update automation settings",
+        body: err instanceof Error ? err.message : "Unknown error",
+        tone: "error",
+      });
+    },
   });
 
   const codexLoopbackMutation = useMutation({
@@ -210,6 +282,37 @@ export function CompanySettings() {
     setSnippetCopied(false);
     setSnippetCopyDelightId(0);
   }, [selectedCompanyId]);
+
+  useEffect(() => {
+    if (!selectedCompanyId || !selectedCompany || !automationDirty || automationMutation.isPending) {
+      return;
+    }
+    if (automationSaveTimerRef.current) {
+      window.clearTimeout(automationSaveTimerRef.current);
+    }
+    automationSaveTimerRef.current = window.setTimeout(() => {
+      automationMutation.mutate({
+        defaultHireAdapter: defaultHireAdapter || null,
+        autoReviewEnabled,
+        defaultReviewerAgentId: defaultReviewerAgentId || null,
+      });
+      automationSaveTimerRef.current = null;
+    }, 350);
+    return () => {
+      if (automationSaveTimerRef.current) {
+        window.clearTimeout(automationSaveTimerRef.current);
+        automationSaveTimerRef.current = null;
+      }
+    };
+  }, [
+    autoReviewEnabled,
+    automationDirty,
+    automationMutation,
+    defaultHireAdapter,
+    defaultReviewerAgentId,
+    selectedCompany,
+    selectedCompanyId,
+  ]);
 
   const archiveMutation = useMutation({
     mutationFn: ({
@@ -424,6 +527,77 @@ export function CompanySettings() {
             onChange={(v) => settingsMutation.mutate(v)}
             toggleTestId="company-settings-team-approval-toggle"
           />
+        </div>
+      </div>
+
+      <div className="space-y-4" data-testid="company-settings-automation-section">
+        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Automation
+        </div>
+        <div className="space-y-3 rounded-md border border-border px-4 py-4">
+          <Field
+            label="Default new-hire adapter"
+            hint="When an agent hires a specialist without picking an adapter, Paperclip uses this as the default. Typical: codex_local."
+          >
+            <select
+              data-testid="company-settings-default-hire-adapter"
+              className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+              value={selectedHireAdapterAvailable ? defaultHireAdapter : ""}
+              onChange={(e) => setDefaultHireAdapter(e.target.value)}
+            >
+              <option value="">No default adapter</option>
+              {enabledAdapterOptions.map((adapter) => (
+                <option key={adapter.value} value={adapter.value}>
+                  {adapter.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {!selectedHireAdapterAvailable && defaultHireAdapter ? (
+            <p className="text-xs text-muted-foreground">
+              The saved default adapter is no longer enabled. Pick another adapter to update it.
+            </p>
+          ) : null}
+
+          <ToggleField
+            label="Require review on all new issues"
+            hint="When enabled, Paperclip auto-attaches a review stage to each new issue."
+            checked={autoReviewEnabled}
+            onChange={setAutoReviewEnabled}
+            toggleTestId="company-settings-auto-review-toggle"
+          />
+
+          {autoReviewEnabled ? (
+            <>
+              <Field
+                label="Designated reviewer"
+                hint="If this reviewer is unavailable or is the issue assignee, Paperclip auto-picks an active agent whose adapter differs from the assignee's."
+              >
+                <select
+                  data-testid="company-settings-default-reviewer-agent"
+                  className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+                  value={selectedReviewerAvailable ? defaultReviewerAgentId : ""}
+                  onChange={(e) => setDefaultReviewerAgentId(e.target.value)}
+                >
+                  <option value="">No default reviewer</option>
+                  {availableReviewerOptions.map((agent) => (
+                    <option key={agent.value} value={agent.value}>
+                      {agent.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {!selectedReviewerAvailable && defaultReviewerAgentId ? (
+                <p className="text-xs text-muted-foreground">
+                  The saved default reviewer is no longer available. Pick another agent to update it.
+                </p>
+              ) : null}
+            </>
+          ) : null}
+
+          {automationMutation.isPending ? (
+            <span className="text-xs text-muted-foreground">Saving automation settings...</span>
+          ) : null}
         </div>
       </div>
 
