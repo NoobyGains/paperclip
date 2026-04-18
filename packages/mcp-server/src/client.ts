@@ -108,6 +108,10 @@ export class PaperclipApiClient {
     return this.requestJson("POST", "/project-archetype/detect", { body: { repoPath } });
   }
 
+  async onboardPortfolio(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.requestJson("POST", "/portfolio/onboard", { body });
+  }
+
   async requestJson<T>(method: string, path: string, options: JsonRequestOptions = {}): Promise<T> {
     if (!path.startsWith("/")) {
       throw new Error(`API path must start with "/": ${path}`);

@@ -37,3 +37,13 @@ export { reconcilePersistedRuntimeServicesOnStartup, restartDesiredRuntimeServic
 export { createStorageServiceFromConfig, getStorageService } from "../storage/index.js";
 export { detectArchetype } from "./project-archetype.js";
 export { readCeoOverlayFile, writeCeoOverlayFiles, CEO_OVERLAY_FILES } from "./ceo-overlay.js";
+export { onboardPortfolio } from "./portfolio-onboard.js";
+export type {
+  PortfolioOnboardInput,
+  PortfolioOnboardResult,
+  OnboardedProject,
+  SkippedProject,
+  RefusedHire,
+  PortfolioProjectInput,
+  OperatorProfileInput,
+} from "./portfolio-onboard.js";
