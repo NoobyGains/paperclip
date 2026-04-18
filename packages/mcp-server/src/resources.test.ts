@@ -150,4 +150,32 @@ describe("paperclip MCP resources", () => {
     // Two network calls — one per read(), proving no in-memory cache
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("setup recipe resource fetches /llms/setup-recipe.txt", async () => {
+    const recipeBody = [
+      "# Paperclip Setup Recipe",
+      "",
+      "You are onboarding projects for this operator.",
+      "",
+      "## Operator context",
+      "",
+      "Billing mode: **subscription-only (no API billing)**",
+      "",
+      "## Canonical onboarding recipe",
+      "",
+      "For each project: call `paperclipOnboardPortfolio` with the repo path",
+    ].join("\n");
+
+    const fetchMock = vi.fn().mockResolvedValue(mockTextResponse(recipeBody));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const text = await findResource("Setup recipe").read();
+    expect(text).toContain("# Paperclip Setup Recipe");
+    expect(text).toContain("paperclipOnboardPortfolio");
+    expect(text).toContain("subscription-only");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe("http://localhost:3100/llms/setup-recipe.txt");
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer token-abc");
+  });
 });
