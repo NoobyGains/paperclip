@@ -52,6 +52,47 @@ export const AGENT_ROLES = [
 ] as const;
 export type AgentRole = (typeof AGENT_ROLES)[number];
 
+/**
+ * Roles that are granted `canCreateAgents=true` by default when hired.
+ * Enables the hiring-authority cascade: the CEO hires team leads who then
+ * hire their own specialists. Worker roles (engineer, qa, general) do not
+ * get this permission automatically — specialists don't hire.
+ */
+export const LEAD_ROLES = [
+  "ceo",
+  "cto",
+  "cmo",
+  "cfo",
+  "pm",
+  "devops",
+  "designer",
+  "researcher",
+] as const satisfies readonly AgentRole[];
+export type LeadRole = (typeof LEAD_ROLES)[number];
+
+export function isLeadRole(role: string): role is LeadRole {
+  return (LEAD_ROLES as readonly string[]).includes(role);
+}
+
+/**
+ * Normalized reasoning-effort tier vocabulary across adapters. Each adapter
+ * maps this to its own field — codex_local uses `modelReasoningEffort`,
+ * opencode uses `variant`, pi uses `thinking`, claude uses `effort`. The
+ * normalized vocabulary gives the CEO one name to pick from.
+ *
+ * Not every tier is supported on every adapter (e.g., claude_local tops out
+ * at `max` by mapping to Claude Code's extended-thinking budgets).
+ */
+export const REASONING_TIERS = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+export type ReasoningTier = (typeof REASONING_TIERS)[number];
+
 export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
   ceo: "CEO",
   cto: "CTO",
