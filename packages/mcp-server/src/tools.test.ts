@@ -682,4 +682,26 @@ describe("paperclip MCP tools", () => {
     expect(payload.stack).toBe("pnpm-monorepo");
     expect(payload.packageManager).toBe("pnpm");
   });
+
+  it("paperclipWriteCeoOverlay forwards projectId and files", async () => {
+    const projId = "00000000-0000-0000-0000-000000000001";
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockJsonResponse({ written: ["AGENTS.md"], repoPath: "/path/to/repo" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipWriteCeoOverlay");
+    const response = await tool.execute({ projectId: projId, files: { "AGENTS.md": "# test" } });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toContain(projId);
+    expect(String(url)).toContain("ceo-overlay");
+    expect(init.method).toBe("POST");
+    const body = JSON.parse(String(init.body));
+    expect(body.files["AGENTS.md"]).toBe("# test");
+
+    const payload = JSON.parse(response.content[0]!.text);
+    expect(payload.written).toEqual(["AGENTS.md"]);
+  });
 });

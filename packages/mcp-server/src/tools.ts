@@ -270,6 +270,7 @@ const TOOL_ANNOTATIONS: Record<string, PaperclipToolAnnotations> = {
   paperclipGetAdapterConfigSchema: { ...READ_ONLY, title: "Adapter config schema" },
   paperclipListHiringProfiles: { ...READ_ONLY, title: "List hiring profiles" },
   paperclipHireWithProfile: { ...SAFE_WRITE, title: "Hire with profile" },
+  paperclipWriteCeoOverlay: { ...SAFE_WRITE, title: "Write CEO overlay" },
   paperclipBootstrapApp: {
     ...SAFE_WRITE,
     title: "Bootstrap a paperclip app",
@@ -1315,6 +1316,20 @@ export function createToolDefinitions(
       "Read a local repo and return its archetype descriptor: stack (pnpm-monorepo, npm-single, python-poetry, rust-cargo, go-modules, dotnet, unknown), package manager, common commands (test/migration/lint/build), architecture doc path, existing CLAUDE.md/AGENTS.md locations, and workspaces. Used by onboarding to pick team shapes and seed CEO overlays.",
       z.object({ repoPath: z.string().min(1).max(1024) }),
       async ({ repoPath }) => client.detectProjectArchetype(repoPath),
+    ),
+    makeTool(
+      "paperclipWriteCeoOverlay",
+      "Write per-project CEO overlay files into the managed repo's .paperclip/ceo/ folder. Each CEO that has a projectId set will see these files merged over the server defaults on their next hire / heartbeat bundle load. Accepts any subset of AGENTS.md, HEARTBEAT.md, SOUL.md, TOOLS.md.",
+      z.object({
+        projectId: z.string().uuid(),
+        files: z.object({
+          "AGENTS.md": z.string().optional(),
+          "HEARTBEAT.md": z.string().optional(),
+          "SOUL.md": z.string().optional(),
+          "TOOLS.md": z.string().optional(),
+        }),
+      }),
+      async ({ projectId, files }) => client.writeCeoOverlay(projectId, files),
     ),
     makeTool(
       "paperclipApiRequest",
