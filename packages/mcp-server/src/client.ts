@@ -137,8 +137,34 @@ export class PaperclipApiClient {
     return parsedBody as T;
   }
 
+  /** Lazily-fetched operator profile, cached for the lifetime of this client instance. */
+  private _profileCache: Record<string, unknown> | null = null;
+  private _profileFetchPromise: Promise<Record<string, unknown>> | null = null;
+
   async getMyProfile(): Promise<Record<string, unknown>> {
     return this.requestJson("GET", "/me/profile");
+  }
+
+  /**
+   * Fetch the operator profile exactly once per session and cache it.
+   * Subsequent calls return the cached value synchronously.
+   * On any fetch failure, resolves to null so callers can fall back gracefully.
+   */
+  async getCachedProfile(): Promise<Record<string, unknown> | null> {
+    if (this._profileCache !== null) return this._profileCache;
+    if (this._profileFetchPromise) return this._profileFetchPromise;
+    this._profileFetchPromise = this.getMyProfile()
+      .then((profile) => {
+        this._profileCache = profile;
+        return profile;
+      })
+      .catch(() => {
+        // Swallow the error — callers fall back to static descriptions.
+        return null as unknown as Record<string, unknown>;
+      });
+    const result = await this._profileFetchPromise;
+    this._profileFetchPromise = null;
+    return result;
   }
 
   async updateMyProfile(body: Record<string, unknown>): Promise<Record<string, unknown>> {

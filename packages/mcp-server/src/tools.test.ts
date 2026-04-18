@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PaperclipApiClient } from "./client.js";
-import { createToolDefinitions } from "./tools.js";
+import {
+  buildBootstrapAppDescription,
+  buildCreateAgentHireDescription,
+  buildHireWithProfileDescription,
+  createToolDefinitions,
+  type OperatorProfile,
+} from "./tools.js";
 
 function makeClient() {
   return new PaperclipApiClient({
@@ -515,5 +521,145 @@ describe("paperclip MCP tools", () => {
     const payload = JSON.parse(response.content[0]!.text);
     expect(payload.staleLock).toBe(false);
     expect(payload.suggestedAction).toBeNull();
+  });
+
+  describe("dynamic (profile-derived) tool descriptions (P4)", () => {
+    const subscriptionOnlyProfile: OperatorProfile = {
+      subscriptionOnly: true,
+      claudeSubscription: null,
+      codexSubscription: null,
+    };
+
+    const apiProfile: OperatorProfile = {
+      subscriptionOnly: false,
+      claudeSubscription: "pro",
+      codexSubscription: "max",
+    };
+
+    // -----------------------------------------------------------------------
+    // buildHireWithProfileDescription
+    // -----------------------------------------------------------------------
+    it("paperclipHireWithProfile description contains 'subscription-only mode' when profile.subscriptionOnly=true", () => {
+      const desc = buildHireWithProfileDescription(subscriptionOnlyProfile);
+      expect(desc).toContain("subscription-only mode");
+    });
+
+    it("paperclipHireWithProfile description lists profile names when subscriptionOnly=true", () => {
+      const desc = buildHireWithProfileDescription(subscriptionOnlyProfile);
+      expect(desc).toContain("coding-heavy");
+      expect(desc).toContain("reviewer");
+      expect(desc).toContain("research");
+    });
+
+    it("paperclipHireWithProfile description includes subscription tiers when subscriptionOnly=false", () => {
+      const desc = buildHireWithProfileDescription(apiProfile);
+      expect(desc).toContain("Codex subscription: max");
+      expect(desc).toContain("Claude subscription: pro");
+      expect(desc).not.toContain("subscription-only mode");
+    });
+
+    it("paperclipHireWithProfile description falls back to static when profile is null", () => {
+      const desc = buildHireWithProfileDescription(null);
+      expect(desc).toContain("Hire a new agent using one of the CEO hiring profiles");
+      expect(desc).not.toContain("subscription-only mode");
+    });
+
+    // -----------------------------------------------------------------------
+    // buildBootstrapAppDescription
+    // -----------------------------------------------------------------------
+    it("paperclipBootstrapApp description contains 'subscription-only mode' when profile.subscriptionOnly=true", () => {
+      const desc = buildBootstrapAppDescription(subscriptionOnlyProfile);
+      expect(desc).toContain("subscription-only mode");
+    });
+
+    it("paperclipBootstrapApp description lists active subscriptions when subscriptionOnly=false", () => {
+      const desc = buildBootstrapAppDescription(apiProfile);
+      expect(desc).toContain("Codex (max)");
+      expect(desc).toContain("Claude (pro)");
+      expect(desc).not.toContain("subscription-only mode");
+    });
+
+    it("paperclipBootstrapApp description falls back to static when profile is null", () => {
+      const desc = buildBootstrapAppDescription(null);
+      expect(desc).toContain("One-call app onboarding");
+      expect(desc).not.toContain("subscription-only mode");
+    });
+
+    // -----------------------------------------------------------------------
+    // buildCreateAgentHireDescription
+    // -----------------------------------------------------------------------
+    it("paperclipCreateAgentHire description contains 'subscription-only mode' when profile.subscriptionOnly=true", () => {
+      const desc = buildCreateAgentHireDescription(subscriptionOnlyProfile);
+      expect(desc).toContain("subscription-only mode");
+    });
+
+    it("paperclipCreateAgentHire description lists active subscriptions when subscriptionOnly=false", () => {
+      const desc = buildCreateAgentHireDescription(apiProfile);
+      expect(desc).toContain("Codex (max)");
+      expect(desc).toContain("Claude (pro)");
+      expect(desc).not.toContain("subscription-only mode");
+    });
+
+    it("paperclipCreateAgentHire description falls back to static when profile is null", () => {
+      const desc = buildCreateAgentHireDescription(null);
+      expect(desc).toContain("Submit an agent-hire request");
+      expect(desc).not.toContain("subscription-only mode");
+    });
+
+    // -----------------------------------------------------------------------
+    // Integration: createToolDefinitions wires profile into tool descriptions
+    // -----------------------------------------------------------------------
+    it("createToolDefinitions wires subscription-only profile into paperclipHireWithProfile description", () => {
+      const client = makeClient();
+      const tools = createToolDefinitions(client, subscriptionOnlyProfile);
+      const tool = tools.find((t) => t.name === "paperclipHireWithProfile");
+      expect(tool).toBeDefined();
+      expect(tool!.description).toContain("subscription-only mode");
+    });
+
+    it("createToolDefinitions uses static description for paperclipHireWithProfile when no profile", () => {
+      const client = makeClient();
+      const tools = createToolDefinitions(client, null);
+      const tool = tools.find((t) => t.name === "paperclipHireWithProfile");
+      expect(tool).toBeDefined();
+      expect(tool!.description).not.toContain("subscription-only mode");
+    });
+
+    // -----------------------------------------------------------------------
+    // getCachedProfile session caching
+    // -----------------------------------------------------------------------
+    it("getCachedProfile returns null on fetch failure and does not throw", async () => {
+      const client = makeClient();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockRejectedValue(new Error("network down")),
+      );
+      const result = await client.getCachedProfile();
+      expect(result).toBeNull();
+    });
+
+    it("getCachedProfile only fetches once even if called multiple times", async () => {
+      const client = makeClient();
+      const profile = { subscriptionOnly: true };
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(mockJsonResponse(profile));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const [r1, r2, r3] = await Promise.all([
+        client.getCachedProfile(),
+        client.getCachedProfile(),
+        client.getCachedProfile(),
+      ]);
+
+      expect(r1).toEqual(profile);
+      expect(r2).toEqual(profile);
+      expect(r3).toEqual(profile);
+      // Profile endpoint called exactly once despite three concurrent calls.
+      const profileCalls = fetchMock.mock.calls.filter((args) =>
+        String(args[0]).includes("/me/profile"),
+      );
+      expect(profileCalls.length).toBe(1);
+    });
   });
 });
