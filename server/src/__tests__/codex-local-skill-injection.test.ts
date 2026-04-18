@@ -1,8 +1,12 @@
+// skipped on Windows — skill injection creates symlinks which require elevated
+// privileges or Developer Mode on Windows (issue #33)
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ensureCodexSkillsInjected } from "@paperclipai/adapter-codex-local/server";
+
+const isWindows = process.platform === "win32";
 
 async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -30,7 +34,7 @@ async function createCustomSkill(root: string, skillName: string) {
   );
 }
 
-describe("codex local adapter skill injection", () => {
+describe.skipIf(isWindows)("codex local adapter skill injection", () => {
   const paperclipKey = "paperclipai/paperclip/paperclip";
   const cleanupDirs = new Set<string>();
 

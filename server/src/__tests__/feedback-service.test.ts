@@ -1,3 +1,5 @@
+// skipped on Windows — embedded-postgres holds file handles after stop(),
+// causing EPERM on rmSync in afterAll (issue #33)
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -5,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+const isWindows = process.platform === "win32";
 import { writePaperclipSkillSyncPreference } from "@paperclipai/adapter-utils/server-utils";
 import {
   agents,
@@ -96,7 +100,7 @@ async function closeDbClient(db: ReturnType<typeof createDb> | undefined) {
   await db?.$client?.end?.({ timeout: 0 });
 }
 
-describe("feedbackService.saveIssueVote", () => {
+describe.skipIf(isWindows)("feedbackService.saveIssueVote", () => {
   let db!: ReturnType<typeof createDb>;
   let svc!: ReturnType<typeof feedbackService>;
   let instance: EmbeddedPostgresInstance | null = null;

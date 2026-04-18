@@ -1,3 +1,5 @@
+// skipped on Windows — symlink creation (fs.symlink) requires elevated privileges
+// or Developer Mode; skill-sync tests create symlinks into a temp skills home (issue #33)
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,6 +8,8 @@ import {
   listCursorSkills,
   syncCursorSkills,
 } from "@paperclipai/adapter-cursor-local/server";
+
+const isWindows = process.platform === "win32";
 
 async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -18,7 +22,7 @@ async function createSkillDir(root: string, name: string) {
   return skillDir;
 }
 
-describe("cursor local skill sync", () => {
+describe.skipIf(isWindows)("cursor local skill sync", () => {
   const paperclipKey = "paperclipai/paperclip/paperclip";
   const cleanupDirs = new Set<string>();
 

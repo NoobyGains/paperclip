@@ -1,3 +1,5 @@
+// skipped on Windows — skill-sync creates symlinks which require elevated
+// privileges or Developer Mode on Windows (issue #33)
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -7,11 +9,13 @@ import {
   syncGeminiSkills,
 } from "@paperclipai/adapter-gemini-local/server";
 
+const isWindows = process.platform === "win32";
+
 async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
 }
 
-describe("gemini local skill sync", () => {
+describe.skipIf(isWindows)("gemini local skill sync", () => {
   const paperclipKey = "paperclipai/paperclip/paperclip";
   const cleanupDirs = new Set<string>();
 

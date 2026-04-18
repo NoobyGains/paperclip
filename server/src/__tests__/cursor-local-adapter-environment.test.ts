@@ -1,8 +1,12 @@
+// probe tests skipped on Windows — fake agent script uses #!/usr/bin/env node shebang
+// which Windows cannot execute directly (issue #33)
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { testEnvironment } from "@paperclipai/adapter-cursor-local/server";
+
+const isWindows = process.platform === "win32";
 
 async function writeFakeAgentCommand(binDir: string, argsCapturePath: string): Promise<string> {
   const commandPath = path.join(binDir, "agent");
@@ -60,7 +64,7 @@ describe("cursor environment diagnostics", () => {
     await fs.rm(path.dirname(cwd), { recursive: true, force: true });
   });
 
-  it("adds --yolo to hello probe args by default", async () => {
+  it.skipIf(isWindows)("adds --yolo to hello probe args by default", async () => {
     const root = path.join(
       os.tmpdir(),
       `paperclip-cursor-local-probe-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -91,7 +95,7 @@ describe("cursor environment diagnostics", () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
-  it("does not auto-add --yolo when extraArgs already bypass trust", async () => {
+  it.skipIf(isWindows)("does not auto-add --yolo when extraArgs already bypass trust", async () => {
     const root = path.join(
       os.tmpdir(),
       `paperclip-cursor-local-probe-extra-${Date.now()}-${Math.random().toString(16).slice(2)}`,

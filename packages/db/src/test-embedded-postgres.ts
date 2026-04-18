@@ -65,6 +65,12 @@ function formatEmbeddedPostgresError(error: unknown): string {
 }
 
 async function probeEmbeddedPostgresSupport(): Promise<EmbeddedPostgresTestSupport> {
+  // skip on Windows — embedded-postgres holds file handles after stop(), causing
+  // EPERM on rmSync during concurrent test runs (issue #33)
+  if (process.platform === "win32") {
+    return { supported: false, reason: "embedded-postgres teardown EPERM on Windows (issue #33)" };
+  }
+
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-embedded-postgres-probe-"));
   const port = await getAvailablePort();
   const EmbeddedPostgres = await getEmbeddedPostgresCtor();

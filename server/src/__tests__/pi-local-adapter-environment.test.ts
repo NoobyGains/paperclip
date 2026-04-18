@@ -1,8 +1,12 @@
+// skipped on Windows — fake pi script uses #!/usr/bin/env node shebang which
+// Windows cannot execute directly without elevated Developer Mode symlinks (issue #33)
 import { describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { testEnvironment } from "@paperclipai/adapter-pi-local/server";
+
+const isWindows = process.platform === "win32";
 
 async function writeFakePiCommand(binDir: string, mode: "success" | "stale-package"): Promise<void> {
   const commandPath = path.join(binDir, "pi");
@@ -38,7 +42,7 @@ process.exit(1);
   await fs.chmod(commandPath, 0o755);
 }
 
-describe("pi_local environment diagnostics", () => {
+describe.skipIf(isWindows)("pi_local environment diagnostics", () => {
   it("passes a hello probe when model discovery and execution succeed", async () => {
     const root = path.join(
       os.tmpdir(),

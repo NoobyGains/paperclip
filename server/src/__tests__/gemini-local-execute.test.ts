@@ -1,8 +1,12 @@
+// skipped on Windows — fake gemini script uses #!/usr/bin/env node shebang which
+// Windows cannot execute directly without elevated Developer Mode symlinks (issue #33)
 import { describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execute } from "@paperclipai/adapter-gemini-local/server";
+
+const isWindows = process.platform === "win32";
 
 async function writeFakeGeminiCommand(commandPath: string): Promise<void> {
   const script = `#!/usr/bin/env node
@@ -44,7 +48,7 @@ type CapturePayload = {
   paperclipEnvKeys: string[];
 };
 
-describe("gemini execute", () => {
+describe.skipIf(isWindows)("gemini execute", () => {
   it("passes prompt via --prompt and injects paperclip env vars", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-gemini-execute-"));
     const workspace = path.join(root, "workspace");

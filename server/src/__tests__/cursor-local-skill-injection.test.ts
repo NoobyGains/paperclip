@@ -1,8 +1,12 @@
+// skipped on Windows — skill injection creates symlinks which require elevated
+// privileges or Developer Mode on Windows (issue #33)
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ensureCursorSkillsInjected } from "@paperclipai/adapter-cursor-local/server";
+
+const isWindows = process.platform === "win32";
 
 async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -12,7 +16,7 @@ async function createSkillDir(root: string, name: string) {
   await fs.mkdir(path.join(root, name), { recursive: true });
 }
 
-describe("cursor local adapter skill injection", () => {
+describe.skipIf(isWindows)("cursor local adapter skill injection", () => {
   const cleanupDirs = new Set<string>();
 
   afterEach(async () => {

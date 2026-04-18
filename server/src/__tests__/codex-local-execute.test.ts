@@ -1,8 +1,12 @@
+// skipped on Windows — fake codex script uses #!/usr/bin/env node shebang and creates
+// auth.json symlinks; both require elevated privileges or Developer Mode on Windows (issue #33)
 import { describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execute } from "@paperclipai/adapter-codex-local/server";
+
+const isWindows = process.platform === "win32";
 
 async function writeFakeCodexCommand(commandPath: string): Promise<void> {
   const script = `#!/usr/bin/env node
@@ -42,7 +46,7 @@ type LogEntry = {
   chunk: string;
 };
 
-describe("codex execute", () => {
+describe.skipIf(isWindows)("codex execute", () => {
   it("uses a Paperclip-managed CODEX_HOME outside worktree mode while preserving shared auth and config", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-default-"));
     const workspace = path.join(root, "workspace");

@@ -1,8 +1,12 @@
+// skipped on Windows — fake claude script uses #!/usr/bin/env node shebang which
+// Windows cannot execute directly without elevated Developer Mode symlinks (issue #33)
 import { describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execute } from "@paperclipai/adapter-claude-local/server";
+
+const isWindows = process.platform === "win32";
 
 async function writeFakeClaudeCommand(commandPath: string): Promise<void> {
   const script = `#!/usr/bin/env node
@@ -115,7 +119,7 @@ async function setupExecuteEnv(
   };
 }
 
-describe("claude execute", () => {
+describe.skipIf(isWindows)("claude execute", () => {
   /**
    * Regression tests for https://github.com/paperclipai/paperclip/issues/2848
    *

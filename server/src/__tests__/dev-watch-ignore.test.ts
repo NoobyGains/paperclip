@@ -1,10 +1,14 @@
+// skipped on Windows — test creates symlinks (node_modules, .vite, dist) which
+// require elevated privileges or Developer Mode on Windows (issue #33)
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveServerDevWatchIgnorePaths } from "../dev-watch-ignore.js";
 
-describe("resolveServerDevWatchIgnorePaths", () => {
+const isWindows = process.platform === "win32";
+
+describe.skipIf(isWindows)("resolveServerDevWatchIgnorePaths", () => {
   it("includes both the worktree UI paths and their real shared targets", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-dev-watch-"));
     const sharedUiRoot = path.join(tempRoot, "shared-ui");
