@@ -702,6 +702,18 @@ export {
 export type { ProjectArchetype, ProjectArchetypeStack } from "./types/project-archetype.js";
 export { projectArchetypeSchema, projectArchetypeStackSchema } from "./types/project-archetype.js";
 
+export {
+  teamRoleEntrySchema,
+  teamShapeSchema,
+  teamShapeRegistrySchema,
+  TEAM_SHAPES,
+  getTeamShape,
+  listTeamShapes,
+  type TeamRoleEntry,
+  type TeamShape,
+  type TeamShapeRegistry,
+} from "./team-shapes.js";
+
 export { API_PREFIX, API } from "./api.js";
 export { normalizeAgentUrlKey, deriveAgentUrlKey, isUuidLike } from "./agent-url-key.js";
 export { deriveProjectUrlKey, normalizeProjectUrlKey, hasNonAsciiContent } from "./project-url-key.js";
