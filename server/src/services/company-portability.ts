@@ -4175,8 +4175,30 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         };
 
         if (planAgent.action === "update" && planAgent.existingAgentId) {
-          let updated = await agents.update(planAgent.existingAgentId, patch);
-          if (!updated) {
+          // Fork Issue #3: materialize the instructions bundle BEFORE the DB
+          // update so the single agents.update() call persists the final
+          // adapterConfig (including instructionsBundleMode/
+          // instructionsRootPath/instructionsEntryFile/instructionsFilePath)
+          // in one atomic write. The previous two-step sequence wiped
+          // bundle keys on the first update and restored them on the second;
+          // any failure between the two left the GUI Instructions tab empty
+          // for claude_local agents even though runtime still worked.
+          let materializedAdapterConfig = patch.adapterConfig as Record<string, unknown>;
+          try {
+            const materialized = await instructions.materializeManagedBundle(
+              { id: planAgent.existingAgentId, companyId: targetCompany.id, name: planAgent.plannedName, adapterConfig: patch.adapterConfig },
+              bundleFiles,
+              { clearLegacyPromptTemplate: true, replaceExisting: true },
+            );
+            materializedAdapterConfig = materialized.adapterConfig;
+          } catch (err) {
+            warnings.push(`Failed to materialize instructions bundle for ${manifestAgent.slug}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          const updatedAgent = await agents.update(planAgent.existingAgentId, {
+            ...patch,
+            adapterConfig: materializedAdapterConfig,
+          });
+          if (!updatedAgent) {
             warnings.push(`Skipped update for missing agent ${planAgent.existingAgentId}.`);
             resultAgents.push({
               slug: planAgent.slug,
@@ -4187,23 +4209,14 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
             });
             continue;
           }
-          try {
-            const materialized = await instructions.materializeManagedBundle(updated, bundleFiles, {
-              clearLegacyPromptTemplate: true,
-              replaceExisting: true,
-            });
-            updated = await agents.update(updated.id, { adapterConfig: materialized.adapterConfig }) ?? updated;
-          } catch (err) {
-            warnings.push(`Failed to materialize instructions bundle for ${manifestAgent.slug}: ${err instanceof Error ? err.message : String(err)}`);
-          }
-          agentStatusById.set(updated.id, updated.status ?? agentStatusById.get(updated.id) ?? null);
-          importedSlugToAgentId.set(planAgent.slug, updated.id);
-          existingSlugToAgentId.set(normalizeAgentUrlKey(updated.name) ?? updated.id, updated.id);
+          agentStatusById.set(updatedAgent.id, updatedAgent.status ?? agentStatusById.get(updatedAgent.id) ?? null);
+          importedSlugToAgentId.set(planAgent.slug, updatedAgent.id);
+          existingSlugToAgentId.set(normalizeAgentUrlKey(updatedAgent.name) ?? updatedAgent.id, updatedAgent.id);
           resultAgents.push({
             slug: planAgent.slug,
-            id: updated.id,
+            id: updatedAgent.id,
             action: "updated",
-            name: updated.name,
+            name: updatedAgent.name,
             reason: planAgent.reason,
           });
           continue;
@@ -4216,6 +4229,13 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
               ? (sourceManifest.company?.requireBoardApprovalForNewAgents ?? true)
               : true;
         const createdStatus = requiresApproval ? "pending_approval" : "idle";
+        // Fork Issue #3: we still need the agent id before materializing the
+        // bundle (the managed root path is derived from agent.id), so CREATE
+        // first, then materialize and do a single follow-up update with the
+        // full adapterConfig. If materialization fails, getBundle's
+        // disk-recovery fallback still lets the GUI surface anything that
+        // was written; the second update reflects whatever final
+        // adapterConfig we have.
         let created = await agents.create(targetCompany.id, {
           ...patch,
           status: createdStatus,
@@ -4229,15 +4249,17 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           true,
           actorUserId ?? null,
         );
+        let materializedCreateAdapterConfig = created.adapterConfig as Record<string, unknown>;
         try {
           const materialized = await instructions.materializeManagedBundle(created, bundleFiles, {
             clearLegacyPromptTemplate: true,
             replaceExisting: true,
           });
-          created = await agents.update(created.id, { adapterConfig: materialized.adapterConfig }) ?? created;
+          materializedCreateAdapterConfig = materialized.adapterConfig;
         } catch (err) {
           warnings.push(`Failed to materialize instructions bundle for ${manifestAgent.slug}: ${err instanceof Error ? err.message : String(err)}`);
         }
+        created = await agents.update(created.id, { adapterConfig: materializedCreateAdapterConfig }) ?? created;
         agentStatusById.set(created.id, created.status ?? createdStatus);
         importedSlugToAgentId.set(planAgent.slug, created.id);
         existingSlugToAgentId.set(normalizeAgentUrlKey(created.name) ?? created.id, created.id);

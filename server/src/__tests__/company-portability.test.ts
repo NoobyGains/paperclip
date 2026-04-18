@@ -2607,11 +2607,93 @@ describe("company portability", () => {
       expect.any(Object),
       { strictMode: false },
     );
+    // Fork Issue #3: with the atomic batch-import fix, the update call
+    // now merges the normalized adapterConfig with the bundle keys
+    // returned by materializeManagedBundle so the GUI Instructions tab
+    // is populated in one DB write. The mocked materializeManagedBundle
+    // adds instructionsBundleMode/instructionsRootPath/etc.
     expect(agentSvc.update).toHaveBeenCalledWith("agent-1", expect.objectContaining({
       adapterType: "codex_local",
-      adapterConfig: {
+      adapterConfig: expect.objectContaining({
         normalized: "updated",
-      },
+        instructionsBundleMode: "managed",
+        instructionsEntryFile: "AGENTS.md",
+      }),
     }));
+  });
+
+  // Fork Issue #3 regression: when batch-importing a claude_local agent,
+  // the managed instructions bundle keys (instructionsBundleMode, etc.)
+  // must be persisted atomically in the same write that stores the rest
+  // of the agent's adapterConfig. Previously this happened in two steps
+  // (create/update stripped of instructions keys, then a follow-up
+  // update to restore them). Any interruption between the two left the
+  // GUI Instructions tab empty even though runtime still worked.
+  it("persists instructions bundle keys atomically when batch-creating a claude_local agent", async () => {
+    const portability = companyPortabilityService({} as any);
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+    });
+
+    companySvc.create.mockResolvedValueOnce({
+      id: "company-imported",
+      name: "Imported Paperclip",
+    });
+    accessSvc.ensureMembership.mockResolvedValue(undefined);
+    agentSvc.list.mockResolvedValue([]);
+
+    agentSvc.create.mockImplementationOnce(async (_companyId: string, input: Record<string, unknown>) => ({
+      id: "agent-batch-1",
+      name: String(input.name),
+      adapterType: input.adapterType,
+      adapterConfig: input.adapterConfig,
+      status: input.status,
+    }));
+    agentSvc.update.mockImplementation(async (id: string, patch: Record<string, unknown>) => ({
+      id,
+      name: "ClaudeCoder",
+      adapterType: patch.adapterType ?? "claude_local",
+      adapterConfig: patch.adapterConfig,
+    }));
+
+    await portability.importBundle({
+      source: {
+        type: "inline",
+        rootPath: exported.rootPath,
+        files: exported.files,
+      },
+      include: {
+        company: true,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+      target: {
+        mode: "new_company",
+        newCompanyName: "Imported Paperclip",
+      },
+      agents: ["claudecoder"],
+      collisionStrategy: "rename",
+    }, "user-1");
+
+    // agentSvc.update should receive the merged adapterConfig that
+    // includes the instructionsBundleMode key (coming from the mocked
+    // materializeManagedBundle). There should be exactly ONE update
+    // per created agent - not the legacy two-step sequence.
+    const updateCalls = agentSvc.update.mock.calls.filter(
+      ([, patch]: [string, Record<string, unknown>]) => (patch as Record<string, unknown>).adapterConfig !== undefined,
+    );
+    expect(updateCalls.length).toBe(1);
+    expect(updateCalls[0]?.[1]).toMatchObject({
+      adapterConfig: expect.objectContaining({
+        instructionsBundleMode: "managed",
+        instructionsEntryFile: "AGENTS.md",
+      }),
+    });
   });
 });
