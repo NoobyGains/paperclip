@@ -62,12 +62,22 @@ export const createAgentSchema = z.object({
 
 export type CreateAgent = z.infer<typeof createAgentSchema>;
 
+export const agentHireCapabilitiesSchema = z.object({
+  webSearch: z.boolean().optional(),
+  browser: z.boolean().optional(),
+  terminal: z.boolean().optional(),
+  filesystem: z.boolean().optional(),
+});
+
+export type AgentHireCapabilitiesInput = z.infer<typeof agentHireCapabilitiesSchema>;
+
 export const createAgentHireSchema = createAgentSchema
   .omit({ adapterType: true })
   .extend({
     adapterType: agentAdapterTypeSchema.optional(),
     sourceIssueId: z.string().uuid().optional().nullable(),
     sourceIssueIds: z.array(z.string().uuid()).optional(),
+    hireCapabilities: agentHireCapabilitiesSchema.optional(),
   });
 
 export type CreateAgentHire = z.infer<typeof createAgentHireSchema>;
