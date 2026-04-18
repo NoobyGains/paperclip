@@ -253,6 +253,44 @@ describe("paperclip MCP tools", () => {
     expect(payload.suggestedAction).toContain("paperclipReleaseStaleExecutionLock");
   });
 
+  it("sets isError:true when a tool call fails so the operator-LLM can detect it", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "permission denied" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipGetIssue");
+    const response = await tool.execute({ issueId: "PAP-99" });
+
+    expect(response.isError).toBe(true);
+    expect(response.content[0]?.text).toContain("permission denied");
+  });
+
+  it("attaches readOnly/destructive/idempotent annotations per tool category", () => {
+    // Spot-check that the central annotation map reaches each category.
+    const read = getTool("paperclipDiagnoseIssue").annotations;
+    const update = getTool("paperclipReleaseStaleExecutionLock").annotations;
+    const destructive = getTool("paperclipForceReleaseExecutionLock").annotations;
+
+    expect(read?.readOnlyHint).toBe(true);
+    expect(read?.destructiveHint).toBe(false);
+
+    expect(update?.readOnlyHint).toBe(false);
+    expect(update?.idempotentHint).toBe(true);
+    expect(update?.destructiveHint).toBe(false);
+
+    expect(destructive?.destructiveHint).toBe(true);
+    expect(destructive?.readOnlyHint).toBe(false);
+  });
+
+  it("annotates the raw api escape hatch with openWorldHint so clients prompt before use", () => {
+    const tool = getTool("paperclipApiRequest");
+    expect(tool.annotations?.openWorldHint).toBe(true);
+  });
+
   it("paperclipDiagnoseIssue does not flag stale lock when run is active", async () => {
     const fetchMock = vi.fn().mockImplementation((url: URL | string) => {
       const path = String(url);

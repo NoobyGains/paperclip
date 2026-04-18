@@ -20,12 +20,28 @@ import {
 } from "./diagnostics.js";
 import { formatErrorResponse, formatTextResponse } from "./format.js";
 
+/**
+ * MCP tool annotations (hints only, not guarantees). See the MCP spec on
+ * ToolAnnotations: readOnlyHint, destructiveHint, idempotentHint,
+ * openWorldHint. Clients use these to decide whether to prompt the user
+ * before invoking a tool. `title` is a short human-readable label.
+ */
+export interface PaperclipToolAnnotations {
+  title?: string;
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
   schema: z.AnyZodObject;
+  annotations?: PaperclipToolAnnotations;
   execute: (input: Record<string, unknown>) => Promise<{
     content: Array<{ type: "text"; text: string }>;
+    isError?: boolean;
   }>;
 }
 
@@ -34,11 +50,13 @@ function makeTool<TSchema extends z.ZodRawShape>(
   description: string,
   schema: z.ZodObject<TSchema>,
   execute: (input: z.infer<typeof schema>) => Promise<unknown>,
+  annotations?: PaperclipToolAnnotations,
 ): ToolDefinition {
   return {
     name,
     description,
     schema,
+    annotations,
     execute: async (input) => {
       try {
         const parsed = schema.parse(input);
@@ -49,6 +67,34 @@ function makeTool<TSchema extends z.ZodRawShape>(
     },
   };
 }
+
+// Paperclip is treated as the user's own trusted data plane (not a random
+// external service), so openWorldHint is false across the surface unless
+// the tool is the escape-hatch paperclipApiRequest.
+const READ_ONLY: PaperclipToolAnnotations = {
+  readOnlyHint: true,
+  idempotentHint: true,
+  destructiveHint: false,
+  openWorldHint: false,
+};
+const SAFE_WRITE: PaperclipToolAnnotations = {
+  readOnlyHint: false,
+  idempotentHint: false,
+  destructiveHint: false,
+  openWorldHint: false,
+};
+const IDEMPOTENT_UPDATE: PaperclipToolAnnotations = {
+  readOnlyHint: false,
+  idempotentHint: true,
+  destructiveHint: false,
+  openWorldHint: false,
+};
+const DESTRUCTIVE: PaperclipToolAnnotations = {
+  readOnlyHint: false,
+  idempotentHint: false,
+  destructiveHint: true,
+  openWorldHint: false,
+};
 
 function parseOptionalJson(raw: string | undefined | null): unknown {
   if (!raw || raw.trim().length === 0) return undefined;
@@ -165,8 +211,83 @@ const diagnoseCompanySchema = z.object({
 });
 
 
+/**
+ * Annotations are attached centrally at the end of createToolDefinitions
+ * so each makeTool call stays terse. Keys must match tool names exactly.
+ */
+const TOOL_ANNOTATIONS: Record<string, PaperclipToolAnnotations> = {
+  // Read-only / diagnostic tools
+  paperclipMe: { ...READ_ONLY, title: "Current actor" },
+  paperclipInboxLite: { ...READ_ONLY, title: "Agent inbox (lite)" },
+  paperclipListAgents: { ...READ_ONLY, title: "List agents" },
+  paperclipGetAgent: { ...READ_ONLY, title: "Get agent" },
+  paperclipListIssues: { ...READ_ONLY, title: "List issues" },
+  paperclipGetIssue: { ...READ_ONLY, title: "Get issue" },
+  paperclipGetHeartbeatContext: { ...READ_ONLY, title: "Heartbeat context" },
+  paperclipListComments: { ...READ_ONLY, title: "List comments" },
+  paperclipGetComment: { ...READ_ONLY, title: "Get comment" },
+  paperclipListIssueApprovals: { ...READ_ONLY, title: "List issue approvals" },
+  paperclipListDocuments: { ...READ_ONLY, title: "List issue documents" },
+  paperclipGetDocument: { ...READ_ONLY, title: "Get issue document" },
+  paperclipListDocumentRevisions: { ...READ_ONLY, title: "List document revisions" },
+  paperclipListProjects: { ...READ_ONLY, title: "List projects" },
+  paperclipGetProject: { ...READ_ONLY, title: "Get project" },
+  paperclipListGoals: { ...READ_ONLY, title: "List goals" },
+  paperclipGetGoal: { ...READ_ONLY, title: "Get goal" },
+  paperclipListApprovals: { ...READ_ONLY, title: "List approvals" },
+  paperclipGetApproval: { ...READ_ONLY, title: "Get approval" },
+  paperclipGetApprovalIssues: { ...READ_ONLY, title: "Approval issues" },
+  paperclipListApprovalComments: { ...READ_ONLY, title: "List approval comments" },
+  paperclipListAgentHires: { ...READ_ONLY, title: "List agent hires" },
+  paperclipGetCompanySettings: { ...READ_ONLY, title: "Company settings" },
+  paperclipListRoutines: { ...READ_ONLY, title: "List routines" },
+  paperclipGetRoutine: { ...READ_ONLY, title: "Get routine" },
+  paperclipListCompanySkills: { ...READ_ONLY, title: "List company skills" },
+  paperclipPreviewCompanyImport: { ...READ_ONLY, title: "Preview company import" },
+  paperclipDiagnoseIssue: { ...READ_ONLY, title: "Diagnose issue" },
+  paperclipDiagnoseAgent: { ...READ_ONLY, title: "Diagnose agent" },
+  paperclipDiagnoseCompany: { ...READ_ONLY, title: "Diagnose company" },
+  paperclipSetup: { ...READ_ONLY, title: "MCP setup validator" },
+
+  // Safe writes (create new data, do not overwrite existing)
+  paperclipCreateIssue: { ...SAFE_WRITE, title: "Create issue" },
+  paperclipAddComment: { ...SAFE_WRITE, title: "Add issue comment" },
+  paperclipCreateApproval: { ...SAFE_WRITE, title: "Create approval" },
+  paperclipAddApprovalComment: { ...SAFE_WRITE, title: "Add approval comment" },
+  paperclipCreateAgentHire: { ...SAFE_WRITE, title: "Hire agent" },
+
+  // Idempotent updates (can be retried safely)
+  paperclipUpdateIssue: { ...IDEMPOTENT_UPDATE, title: "Update issue" },
+  paperclipUpsertIssueDocument: { ...IDEMPOTENT_UPDATE, title: "Upsert issue document" },
+  paperclipCheckoutIssue: { ...IDEMPOTENT_UPDATE, title: "Checkout issue" },
+  paperclipReleaseIssue: { ...IDEMPOTENT_UPDATE, title: "Release issue" },
+  paperclipUpdateCompanySettings: { ...IDEMPOTENT_UPDATE, title: "Update company settings" },
+  paperclipReleaseStaleExecutionLock: {
+    ...IDEMPOTENT_UPDATE,
+    title: "Release stale execution lock",
+  },
+  paperclipApprovalDecision: { ...IDEMPOTENT_UPDATE, title: "Approval decision" },
+  paperclipLinkIssueApproval: { ...IDEMPOTENT_UPDATE, title: "Link issue approval" },
+  paperclipRestoreIssueDocumentRevision: {
+    ...IDEMPOTENT_UPDATE,
+    title: "Restore document revision",
+  },
+
+  // Destructive (override/remove something)
+  paperclipForceReleaseExecutionLock: {
+    ...DESTRUCTIVE,
+    title: "Force-release execution lock",
+  },
+  paperclipUnlinkIssueApproval: { ...DESTRUCTIVE, title: "Unlink issue approval" },
+
+  // The generic escape hatch talks to an arbitrary path — annotations
+  // can't be determined. Mark openWorldHint true to encourage the client
+  // to prompt the user before using it.
+  paperclipApiRequest: { openWorldHint: true, title: "Raw API request" },
+};
+
 export function createToolDefinitions(client: PaperclipApiClient): ToolDefinition[] {
-  return [
+  const tools: ToolDefinition[] = [
     makeTool(
       "paperclipMe",
       "Get the current authenticated Paperclip actor details",
@@ -829,4 +950,12 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
       },
     ),
   ];
+
+  // Apply central annotations. If a tool is missing from the map, ship
+  // it with no annotations rather than failing — future additions can
+  // backfill.
+  return tools.map((tool) => ({
+    ...tool,
+    annotations: TOOL_ANNOTATIONS[tool.name] ?? tool.annotations,
+  }));
 }
