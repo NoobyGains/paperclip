@@ -123,5 +123,14 @@ export function createResourceDefinitions(
       mimeType: "text/markdown",
       read: async () => client.fetchRawText("/llms/hiring-playbook.txt"),
     },
+    {
+      name: "Adapters",
+      title: "Enabled adapters",
+      uri: "paperclip://adapters",
+      description:
+        "All adapters registered on this paperclip instance (claude_local, codex_local, gemini_local, opencode_local, pi_local, cursor, hermes_local, openclaw_gateway, plus any external plugin adapters). Each entry includes type, label, model count, builtin-vs-external, and load status. Read this before picking an adapter for a hire.",
+      mimeType: "application/json",
+      read: async () => readJson(client, "/adapters"),
+    },
   ];
 }

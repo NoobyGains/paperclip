@@ -257,6 +257,8 @@ const TOOL_ANNOTATIONS: Record<string, PaperclipToolAnnotations> = {
   paperclipDiagnoseAgent: { ...READ_ONLY, title: "Diagnose agent" },
   paperclipDiagnoseCompany: { ...READ_ONLY, title: "Diagnose company" },
   paperclipSetup: { ...READ_ONLY, title: "MCP setup validator" },
+  paperclipGetAdapterModels: { ...READ_ONLY, title: "Adapter model list" },
+  paperclipGetAdapterConfigSchema: { ...READ_ONLY, title: "Adapter config schema" },
   paperclipBootstrapApp: {
     ...SAFE_WRITE,
     title: "Bootstrap a paperclip app",
@@ -863,6 +865,29 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
       diagnoseCompanySchema,
       async ({ companyId, approvalAgeWarnHours }) =>
         diagnoseCompany(client, { companyId, approvalAgeWarnHours }),
+    ),
+    makeTool(
+      "paperclipGetAdapterModels",
+      "Get the enriched model list for a specific adapter type (e.g. codex_local, claude_local). Each model entry includes tier (mini/standard/thinking/fast), recommendedFor (simple/coding/reasoning/research/review), contextWindow, and notes. Use this when picking a model for a hire.",
+      z.object({
+        adapterType: z.string().min(1).max(64),
+        companyId: companyIdOptional,
+      }),
+      async ({ adapterType, companyId }) =>
+        client.requestJson(
+          "GET",
+          `/companies/${client.resolveCompanyId(companyId)}/adapters/${encodeURIComponent(adapterType)}/models`,
+        ),
+    ),
+    makeTool(
+      "paperclipGetAdapterConfigSchema",
+      "Get the Zod-derived config schema for a specific adapter type. Returns the structured shape of the adapterConfig field so the operator-LLM knows what options exist (model, effort, search, sandbox, etc.) without having to guess from documentation.",
+      z.object({ adapterType: z.string().min(1).max(64) }),
+      async ({ adapterType }) =>
+        client.requestJson(
+          "GET",
+          `/adapters/${encodeURIComponent(adapterType)}/config-schema`,
+        ),
     ),
     makeTool(
       "paperclipBootstrapApp",
