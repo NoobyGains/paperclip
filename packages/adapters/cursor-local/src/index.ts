@@ -1,50 +1,278 @@
+// AdapterModel core fields (id + label) come from @paperclipai/adapter-utils.
+// The extended fields below (tier, recommendedFor, contextWindow, notes) are
+// defined here until migration 0060 / shared-types PR lands in adapter-utils
+// and the AdapterModel interface is officially widened.
+export interface CursorAdapterModel {
+  id: string;
+  label: string;
+  /** Capability tier: "thinking" = extended reasoning, "standard" = full capable, "mini" = fast/lightweight */
+  tier?: "thinking" | "standard" | "mini";
+  /** Use-case tags shown in the model picker UI */
+  recommendedFor?: string[];
+  /** Approximate context window in tokens */
+  contextWindow?: number;
+  /** Free-form note shown in the model picker UI */
+  notes?: string;
+}
+
 export const type = "cursor";
 export const label = "Cursor CLI (local)";
 export const DEFAULT_CURSOR_LOCAL_MODEL = "auto";
 
-const CURSOR_FALLBACK_MODEL_IDS = [
-  "auto",
-  "composer-1.5",
-  "composer-1",
-  "gpt-5.3-codex-low",
-  "gpt-5.3-codex-low-fast",
-  "gpt-5.3-codex",
-  "gpt-5.3-codex-fast",
-  "gpt-5.3-codex-high",
-  "gpt-5.3-codex-high-fast",
-  "gpt-5.3-codex-xhigh",
-  "gpt-5.3-codex-xhigh-fast",
-  "gpt-5.3-codex-spark-preview",
-  "gpt-5.2",
-  "gpt-5.2-codex-low",
-  "gpt-5.2-codex-low-fast",
-  "gpt-5.2-codex",
-  "gpt-5.2-codex-fast",
-  "gpt-5.2-codex-high",
-  "gpt-5.2-codex-high-fast",
-  "gpt-5.2-codex-xhigh",
-  "gpt-5.2-codex-xhigh-fast",
-  "gpt-5.1-codex-max",
-  "gpt-5.1-codex-max-high",
-  "gpt-5.2-high",
-  "gpt-5.1-high",
-  "gpt-5.1-codex-mini",
-  "opus-4.6-thinking",
-  "opus-4.6",
-  "opus-4.5",
-  "opus-4.5-thinking",
-  "sonnet-4.6",
-  "sonnet-4.6-thinking",
-  "sonnet-4.5",
-  "sonnet-4.5-thinking",
-  "gemini-3.1-pro",
-  "gemini-3-pro",
-  "gemini-3-flash",
-  "grok",
-  "kimi-k2.5",
-];
+// CursorAdapterModel is structurally a superset of AdapterModel, so it satisfies
+// the models: AdapterModel[] contract on ServerAdapterModule without a cast.
+export const models: CursorAdapterModel[] = [
+  // ── Cursor routing ───────────────────────────────────────────────────────
+  {
+    id: "auto",
+    label: "auto",
+    notes: "Let Cursor route to its best available model",
+  },
 
-export const models = CURSOR_FALLBACK_MODEL_IDS.map((id) => ({ id, label: id }));
+  // ── Cursor Composer ──────────────────────────────────────────────────────
+  {
+    id: "composer-1.5",
+    label: "composer-1.5",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "composer-1",
+    label: "composer-1",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+
+  // ── GPT-5.3-Codex variants ───────────────────────────────────────────────
+  {
+    id: "gpt-5.3-codex-low",
+    label: "gpt-5.3-codex-low",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "gpt-5.3-codex-low-fast",
+    label: "gpt-5.3-codex-low-fast",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "gpt-5.3-codex",
+    label: "gpt-5.3-codex",
+    tier: "standard",
+    recommendedFor: ["coding", "reasoning"],
+  },
+  {
+    id: "gpt-5.3-codex-fast",
+    label: "gpt-5.3-codex-fast",
+    tier: "standard",
+    recommendedFor: ["coding", "reasoning"],
+  },
+  {
+    id: "gpt-5.3-codex-high",
+    label: "gpt-5.3-codex-high",
+    tier: "standard",
+    recommendedFor: ["coding", "reasoning"],
+  },
+  {
+    id: "gpt-5.3-codex-high-fast",
+    label: "gpt-5.3-codex-high-fast",
+    tier: "standard",
+    recommendedFor: ["coding", "reasoning"],
+  },
+  {
+    id: "gpt-5.3-codex-xhigh",
+    label: "gpt-5.3-codex-xhigh",
+    tier: "standard",
+    recommendedFor: ["coding", "reasoning"],
+  },
+  {
+    id: "gpt-5.3-codex-xhigh-fast",
+    label: "gpt-5.3-codex-xhigh-fast",
+    tier: "standard",
+    recommendedFor: ["coding", "reasoning"],
+  },
+  {
+    id: "gpt-5.3-codex-spark-preview",
+    label: "gpt-5.3-codex-spark-preview",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+
+  // ── GPT-5.2 variants ─────────────────────────────────────────────────────
+  {
+    id: "gpt-5.2",
+    label: "gpt-5.2",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "gpt-5.2-codex-low",
+    label: "gpt-5.2-codex-low",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "gpt-5.2-codex-low-fast",
+    label: "gpt-5.2-codex-low-fast",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "gpt-5.2-codex",
+    label: "gpt-5.2-codex",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "gpt-5.2-codex-fast",
+    label: "gpt-5.2-codex-fast",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "gpt-5.2-codex-high",
+    label: "gpt-5.2-codex-high",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "gpt-5.2-codex-high-fast",
+    label: "gpt-5.2-codex-high-fast",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "gpt-5.2-codex-xhigh",
+    label: "gpt-5.2-codex-xhigh",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "gpt-5.2-codex-xhigh-fast",
+    label: "gpt-5.2-codex-xhigh-fast",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "gpt-5.2-high",
+    label: "gpt-5.2-high",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+
+  // ── GPT-5.1 variants ─────────────────────────────────────────────────────
+  {
+    id: "gpt-5.1-codex-max",
+    label: "gpt-5.1-codex-max",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "gpt-5.1-codex-max-high",
+    label: "gpt-5.1-codex-max-high",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "gpt-5.1-high",
+    label: "gpt-5.1-high",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "gpt-5.1-codex-mini",
+    label: "gpt-5.1-codex-mini",
+    tier: "mini",
+    recommendedFor: ["simple"],
+  },
+
+  // ── Claude Opus variants ─────────────────────────────────────────────────
+  {
+    id: "opus-4.6-thinking",
+    label: "opus-4.6-thinking",
+    tier: "thinking",
+    recommendedFor: ["reasoning", "research"],
+  },
+  {
+    id: "opus-4.6",
+    label: "opus-4.6",
+    tier: "standard",
+    recommendedFor: ["coding", "reasoning"],
+  },
+  {
+    id: "opus-4.5",
+    label: "opus-4.5",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "opus-4.5-thinking",
+    label: "opus-4.5-thinking",
+    tier: "thinking",
+    recommendedFor: ["reasoning", "research"],
+  },
+
+  // ── Claude Sonnet variants ───────────────────────────────────────────────
+  {
+    id: "sonnet-4.6",
+    label: "sonnet-4.6",
+    tier: "standard",
+    recommendedFor: ["coding", "reasoning"],
+  },
+  {
+    id: "sonnet-4.6-thinking",
+    label: "sonnet-4.6-thinking",
+    tier: "thinking",
+    recommendedFor: ["reasoning", "research"],
+  },
+  {
+    id: "sonnet-4.5",
+    label: "sonnet-4.5",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "sonnet-4.5-thinking",
+    label: "sonnet-4.5-thinking",
+    tier: "thinking",
+    recommendedFor: ["reasoning", "research"],
+  },
+
+  // ── Gemini variants ──────────────────────────────────────────────────────
+  {
+    id: "gemini-3.1-pro",
+    label: "gemini-3.1-pro",
+    tier: "thinking",
+    recommendedFor: ["reasoning", "research"],
+  },
+  {
+    id: "gemini-3-pro",
+    label: "gemini-3-pro",
+    tier: "thinking",
+    recommendedFor: ["reasoning", "research"],
+  },
+  {
+    id: "gemini-3-flash",
+    label: "gemini-3-flash",
+    tier: "mini",
+    recommendedFor: ["simple"],
+  },
+
+  // ── Other providers ──────────────────────────────────────────────────────
+  {
+    id: "grok",
+    label: "grok",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "kimi-k2.5",
+    label: "kimi-k2.5",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+];
 
 export const agentConfigurationDoc = `# cursor agent configuration
 
