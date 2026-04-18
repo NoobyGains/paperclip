@@ -4082,6 +4082,52 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
     } else {
       targetCompany = await companies.getById(input.target.companyId);
       if (!targetCompany) throw notFound("Target company not found");
+
+      // Gate check: if the target company requires board approval for new agents
+      // and the caller did not pass allowNewAgents, fail loudly BEFORE any
+      // mutations touch the target company so there is no partial-import state.
+      // (The original code deferred this check until after mutations had
+      // already landed — see issue #30.)
+      // Only applies to board_full mode. In agent_safe mode the upstream
+      // agent_safe guard already prevents mutations from landing, and the
+      // adapter-type validation that runs inside the import loop should take
+      // precedence over this gate (as documented in the original code comment).
+      if (
+        mode === "board_full"
+        && include.agents
+        && input.target.mode === "existing_company"
+        && !input.allowNewAgents
+      ) {
+        const targetRequiresApproval =
+          typeof targetCompany.requireBoardApprovalForNewAgents === "boolean"
+            ? targetCompany.requireBoardApprovalForNewAgents
+            : include.company
+              ? (sourceManifest.company?.requireBoardApprovalForNewAgents ?? true)
+              : true;
+        if (targetRequiresApproval) {
+          const gatedEarly = plan.preview.plan.agentPlans.filter(
+            (ap) => ap.action !== "skip" && !ap.existingAgentId,
+          );
+          if (gatedEarly.length > 0) {
+            const pretty = gatedEarly
+              .map((ap) => {
+                const m = plan.selectedAgents.find((a) => a.slug === ap.slug);
+                return `${m?.name ?? ap.slug} (${ap.slug})`;
+              })
+              .join(", ");
+            throw unprocessable(
+              `Target company requires board approval for new agents, so importing `
+              + `${gatedEarly.length} new `
+              + `agent${gatedEarly.length === 1 ? "" : "s"} would leave `
+              + `${gatedEarly.length === 1 ? "it" : "them"} parked in `
+              + `pending_approval: ${pretty}. `
+              + `Pass allowNewAgents=true to import them as idle, or disable `
+              + `requireBoardApprovalForNewAgents on the target company before retrying.`,
+            );
+          }
+        }
+      }
+
       if (include.company && sourceManifest.company && mode === "board_full") {
         const updated = await companies.update(targetCompany.id, {
           name: sourceManifest.company.name,
