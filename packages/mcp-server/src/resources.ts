@@ -1,6 +1,12 @@
 import { PaperclipApiClient } from "./client.js";
 import { diagnoseCompany } from "./diagnostics.js";
 import { listTeamShapes } from "@paperclipai/shared";
+import { PLUGIN_CATALOG } from "./plugin-catalog.js";
+import {
+  recommendPlugins,
+  buildPluginRecommendationsSection,
+  type OperatorProfileSignal,
+} from "./plugins.js";
 
 export interface ResourceDefinition {
   name: string;
@@ -150,9 +156,46 @@ export function createResourceDefinitions(
       title: "Project onboarding recipe",
       uri: "paperclip://setup/recipe",
       description:
-        "End-to-end recipe for onboarding a project (or portfolio of projects) for this operator. Rendered at read time from the operator's profile, the hiring playbook, and the registered adapter list. Read this first when asked to 'set up my projects' or 'onboard my portfolio'.",
+        "End-to-end recipe for onboarding a project (or portfolio of projects) for this operator. Rendered at read time from the operator's profile, the hiring playbook, and the registered adapter list. Includes plugin recommendations for this operator. Read this first when asked to 'set up my projects' or 'onboard my portfolio'.",
       mimeType: "text/markdown",
-      read: async () => client.fetchRawText("/llms/setup-recipe.txt"),
+      read: async () => {
+        const [recipeText, profileRaw] = await Promise.all([
+          client.fetchRawText("/llms/setup-recipe.txt"),
+          client.getMyProfile().catch(() => null),
+        ]);
+        const profile = profileRaw as OperatorProfileSignal | null;
+        const pluginSection = buildPluginRecommendationsSection(profile, null);
+        return `${recipeText.trimEnd()}\n\n${pluginSection}`;
+      },
+    },
+    {
+      name: "Plugin catalog",
+      title: "Plugin catalog",
+      uri: "paperclip://plugins",
+      description:
+        "Full catalog of known plugins from the awesome-paperclip ecosystem. Each entry has id, name, description, repo, category, tags, subscriptionCompatible, and installHint. Use this to discover what plugins are available before making recommendations.",
+      mimeType: "application/json",
+      read: async () => JSON.stringify(PLUGIN_CATALOG, null, 2),
+    },
+    {
+      name: "Recommended plugins",
+      title: "Recommended plugins",
+      uri: "paperclip://plugins/recommended",
+      description:
+        "Filtered view of the plugin catalog, ranked by relevance to the current operator's profile and any detectable archetype signal. Reads the operator profile at request time so results reflect the current subscription and preferences.",
+      mimeType: "application/json",
+      read: async () => {
+        // Best-effort: fetch the operator profile for signals, then recommend.
+        // Falls back to the full sorted catalog if the profile is unavailable.
+        let profile: OperatorProfileSignal | null = null;
+        try {
+          profile = (await client.getMyProfile()) as OperatorProfileSignal;
+        } catch {
+          // ignore — use null profile
+        }
+        const recommended = recommendPlugins(profile, null);
+        return JSON.stringify(recommended, null, 2);
+      },
     },
     {
       name: "Archetypes",

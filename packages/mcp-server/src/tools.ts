@@ -2,6 +2,8 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
 import { discoverProjects } from "./portfolio-discovery.js";
+import { filterPlugins, recommendPlugins } from "./plugins.js";
+import { PLUGIN_CATALOG } from "./plugin-catalog.js";
 import {
   getHiringProfile,
   listHiringProfiles,
@@ -330,6 +332,9 @@ const TOOL_ANNOTATIONS: Record<string, PaperclipToolAnnotations> = {
 
   // R1 — team-shape registry
   paperclipGetTeamShape: { ...READ_ONLY, title: "Get team shape for archetype" },
+
+  // PL1 — plugin catalog
+  paperclipListPlugins: { ...READ_ONLY, title: "List plugins" },
 };
 
 // ---------------------------------------------------------------------------
@@ -1334,6 +1339,35 @@ export function createToolDefinitions(
         }),
       }),
       async ({ projectId, files }) => client.writeCeoOverlay(projectId, files),
+    ),
+    makeTool(
+      "paperclipListPlugins",
+      "List plugins from the awesome-paperclip ecosystem catalog. Returns structured JSON entries with id, name, description, repo, category, tags, subscriptionCompatible, and installHint. Without a filter returns the full catalog. Pass filter.category, filter.subscriptionCompatible, and/or filter.tags to narrow results. Tip: read paperclip://plugins/recommended for a pre-scored view based on your operator profile.",
+      z.object({
+        filter: z
+          .object({
+            category: z
+              .enum([
+                "notifications",
+                "memory",
+                "analytics",
+                "integration",
+                "runtime",
+                "ui",
+                "identity",
+                "sync",
+                "tools",
+                "community",
+              ])
+              .optional(),
+            subscriptionCompatible: z.boolean().optional(),
+            tags: z.array(z.string().min(1)).optional(),
+          })
+          .optional(),
+      }),
+      async ({ filter }) => {
+        return filterPlugins(filter);
+      },
     ),
     makeTool(
       "paperclipApiRequest",
