@@ -118,4 +118,36 @@ describe("paperclip MCP resources", () => {
     expect(String(url)).toBe("http://localhost:3100/llms/operator-context.txt");
     expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer token-abc");
   });
+
+  // Smoke test: mutate state between two read() calls and assert the second reflects the change.
+  // This proves read() goes to the network every time rather than returning a cached value.
+  it("smoke — agents resource reflects live state on each read() call", async () => {
+    const client = makeClient();
+    const resource = createResourceDefinitions(client).find((r) => r.name === "Agents");
+    if (!resource) throw new Error("Agents resource not found");
+
+    // First read: one agent
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockJsonResponse([{ id: "agent-1", name: "CEO", status: "active" }]),
+      )
+      // Second read: two agents (simulates a hire happening between the two reads)
+      .mockResolvedValueOnce(
+        mockJsonResponse([
+          { id: "agent-1", name: "CEO", status: "active" },
+          { id: "agent-2", name: "CTO", status: "idle" },
+        ]),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = JSON.parse(await resource.read()) as Array<unknown>;
+    expect(first).toHaveLength(1);
+
+    const second = JSON.parse(await resource.read()) as Array<unknown>;
+    expect(second).toHaveLength(2);
+
+    // Two network calls — one per read(), proving no in-memory cache
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
