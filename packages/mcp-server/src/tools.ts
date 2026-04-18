@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
+import { discoverProjects } from "./portfolio-discovery.js";
 import {
   getHiringProfile,
   listHiringProfiles,
@@ -314,6 +315,13 @@ const TOOL_ANNOTATIONS: Record<string, PaperclipToolAnnotations> = {
   // can't be determined. Mark openWorldHint true to encourage the client
   // to prompt the user before using it.
   paperclipApiRequest: { openWorldHint: true, title: "Raw API request" },
+
+  // Portfolio discovery — reads local FS and optionally GitHub. No writes.
+  paperclipDiscoverProjects: {
+    ...READ_ONLY,
+    openWorldHint: true, // may reach GitHub API
+    title: "Discover portfolio projects",
+  },
 };
 
 export function createToolDefinitions(client: PaperclipApiClient): ToolDefinition[] {
@@ -1213,6 +1221,27 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
         }
         return client.requestJson(method, path, {
           body: parseOptionalJson(jsonBody),
+        });
+      },
+    ),
+    makeTool(
+      "paperclipDiscoverProjects",
+      "Discover portfolio projects by scanning the local filesystem (one level deep under rootPath for .git directories) and optionally listing a GitHub owner's repos. Deduplicates entries by normalised git remote URL. Read-only — makes no writes to disk or GitHub. Returns { local, github, dedupedTotal }.",
+      z.object({
+        rootPath: z.string().optional().describe(
+          "Absolute path to scan for local git repos. Defaults to the parent of the current working directory.",
+        ),
+        github: z
+          .object({
+            owner: z.string().min(1).describe("GitHub username or organisation to list repos for."),
+          })
+          .optional()
+          .describe("When provided, also fetch repos from the GitHub API for this owner."),
+      }),
+      async ({ rootPath, github }) => {
+        return discoverProjects({
+          rootPath,
+          github,
         });
       },
     ),
