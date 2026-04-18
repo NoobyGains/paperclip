@@ -1150,12 +1150,29 @@ export async function runChildProcess(
         });
 
         const stdin = child.stdin;
-        if (opts.stdin != null && stdin) {
-          void spawnPersistPromise.finally(() => {
-            if (child.killed || stdin.destroyed) return;
-            stdin.write(opts.stdin as string);
-            stdin.end();
+        if (stdin) {
+          // Surface stdin-side errors (EPIPE, write-after-end) as logged
+          // events instead of letting them propagate as unhandled stream
+          // errors. On Windows with some CLIs (notably claude.exe), the
+          // child can exit before we get a chance to write the prompt; if
+          // that happens the stdin write fires on a dead stream and the
+          // resulting error would otherwise hang runChildProcess because
+          // no handler is attached. See NoobyGains/paperclip#15.
+          stdin.on("error", (err: Error) => {
+            const errno = (err as NodeJS.ErrnoException).code;
+            void onLogError(
+              err,
+              runId,
+              `stdin ${errno ?? "error"} (process likely exited before stdin write)`,
+            );
           });
+          if (opts.stdin != null) {
+            void spawnPersistPromise.finally(() => {
+              if (child.killed || stdin.destroyed) return;
+              stdin.write(opts.stdin as string);
+              stdin.end();
+            });
+          }
         }
 
         child.on("error", (err: Error) => {
