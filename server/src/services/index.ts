@@ -36,7 +36,8 @@ export { publishLiveEvent, subscribeCompanyLiveEvents } from "./live-events.js";
 export { reconcilePersistedRuntimeServicesOnStartup, restartDesiredRuntimeServicesOnStartup } from "./workspace-runtime.js";
 export { createStorageServiceFromConfig, getStorageService } from "../storage/index.js";
 export { detectArchetype } from "./project-archetype.js";
-export { readCeoOverlayFile, writeCeoOverlayFiles, CEO_OVERLAY_FILES } from "./ceo-overlay.js";
+export { readCeoOverlayFile, writeCeoOverlayFiles, refineCeoOverlayFiles, CEO_OVERLAY_FILES } from "./ceo-overlay.js";
+export type { RefineCeoOverlayResult } from "./ceo-overlay.js";
 export { onboardPortfolio } from "./portfolio-onboard.js";
 export type {
   PortfolioOnboardInput,
