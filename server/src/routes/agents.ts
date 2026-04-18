@@ -28,6 +28,7 @@ import {
   readPaperclipSkillSyncPreference,
   writePaperclipSkillSyncPreference,
 } from "@paperclipai/adapter-utils/server-utils";
+import { applyCapabilitiesToHirePayload } from "@paperclipai/adapter-utils/capabilities";
 import { trackAgentCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
 import {
@@ -1413,6 +1414,7 @@ export function agentRoutes(db: Db) {
     const sourceIssueIds = parseSourceIssueIds(req.body);
     const {
       desiredSkills: requestedDesiredSkills,
+      hireCapabilities,
       sourceIssueId: _sourceIssueId,
       sourceIssueIds: _sourceIssueIds,
       ...hireInput
@@ -1429,15 +1431,24 @@ export function agentRoutes(db: Db) {
       req,
       (hireInput.adapterConfig ?? {}) as Record<string, unknown>,
     );
-    const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
+    const defaultedAdapterConfig = applyCreateDefaultsByAdapterType(
       hireInput.adapterType,
       ((hireInput.adapterConfig ?? {}) as Record<string, unknown>),
     );
+    const capabilitiesResult = applyCapabilitiesToHirePayload(
+      hireInput.adapterType,
+      defaultedAdapterConfig,
+      hireCapabilities,
+      Array.isArray(requestedDesiredSkills) ? requestedDesiredSkills : undefined,
+    );
+    const requestedAdapterConfig = capabilitiesResult.adapterConfig;
     const desiredSkillAssignment = await resolveDesiredSkillAssignment(
       companyId,
       hireInput.adapterType,
       requestedAdapterConfig,
-      Array.isArray(requestedDesiredSkills) ? requestedDesiredSkills : undefined,
+      capabilitiesResult.desiredSkills.length > 0 || Array.isArray(requestedDesiredSkills)
+        ? capabilitiesResult.desiredSkills
+        : undefined,
     );
     const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
       companyId,
@@ -1592,21 +1603,31 @@ export function agentRoutes(db: Db) {
 
     const {
       desiredSkills: requestedDesiredSkills,
+      hireCapabilities: createHireCapabilities,
       ...createInput
     } = req.body;
     createInput.adapterType = resolveCompanyDefaultAdapterType({
       requestedAdapterType: createInput.adapterType,
       defaultHireAdapter: company.defaultHireAdapter,
     });
-    const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
+    const defaultedCreateAdapterConfig = applyCreateDefaultsByAdapterType(
       createInput.adapterType,
       ((createInput.adapterConfig ?? {}) as Record<string, unknown>),
     );
+    const createCapabilitiesResult = applyCapabilitiesToHirePayload(
+      createInput.adapterType,
+      defaultedCreateAdapterConfig,
+      createHireCapabilities,
+      Array.isArray(requestedDesiredSkills) ? requestedDesiredSkills : undefined,
+    );
+    const requestedAdapterConfig = createCapabilitiesResult.adapterConfig;
     const desiredSkillAssignment = await resolveDesiredSkillAssignment(
       companyId,
       createInput.adapterType,
       requestedAdapterConfig,
-      Array.isArray(requestedDesiredSkills) ? requestedDesiredSkills : undefined,
+      createCapabilitiesResult.desiredSkills.length > 0 || Array.isArray(requestedDesiredSkills)
+        ? createCapabilitiesResult.desiredSkills
+        : undefined,
     );
     const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
       companyId,

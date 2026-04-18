@@ -110,6 +110,13 @@ export interface AgentConfigRevision {
   createdAt: Date;
 }
 
+export interface AgentHireCapabilities {
+  webSearch?: boolean;
+  browser?: boolean;
+  terminal?: boolean;
+  filesystem?: boolean;
+}
+
 export type AdapterEnvironmentCheckLevel = "info" | "warn" | "error";
 export type AdapterEnvironmentTestStatus = "pass" | "warn" | "fail";
 

@@ -92,6 +92,7 @@ export {
 export {
   createAgentSchema,
   createAgentHireSchema,
+  agentHireCapabilitiesSchema,
   updateAgentSchema,
   agentInstructionsBundleModeSchema,
   updateAgentInstructionsBundleSchema,
@@ -106,6 +107,7 @@ export {
   updateAgentPermissionsSchema,
   type CreateAgent,
   type CreateAgentHire,
+  type AgentHireCapabilitiesInput,
   type UpdateAgent,
   type UpdateAgentInstructionsBundle,
   type UpsertAgentInstructionsFile,
