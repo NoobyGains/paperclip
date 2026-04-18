@@ -2614,4 +2614,109 @@ describe("company portability", () => {
       },
     }));
   });
+
+  it("fails loud when importing new agents into a gated existing company", async () => {
+    const portability = companyPortabilityService({} as any);
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+    });
+
+    companySvc.getById.mockResolvedValue({
+      id: "company-1",
+      name: "Paperclip",
+      description: null,
+      brandColor: null,
+      requireBoardApprovalForNewAgents: true,
+    });
+    // Target company has no existing agents, so imported agents are all new.
+    agentSvc.list.mockResolvedValue([]);
+
+    await expect(portability.importBundle({
+      source: {
+        type: "inline",
+        rootPath: exported.rootPath,
+        files: exported.files,
+      },
+      include: {
+        company: false,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+      target: {
+        mode: "existing_company",
+        companyId: "company-1",
+      },
+      agents: ["claudecoder", "cmo"],
+      collisionStrategy: "rename",
+    }, "user-1")).rejects.toThrow(
+      /requires board approval for new agents.*ClaudeCoder \(claudecoder\).*CMO \(cmo\)/s,
+    );
+
+    expect(agentSvc.create).not.toHaveBeenCalled();
+  });
+
+  it("bypasses the approval gate when allowNewAgents is set", async () => {
+    const portability = companyPortabilityService({} as any);
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+    });
+
+    companySvc.getById.mockResolvedValue({
+      id: "company-1",
+      name: "Paperclip",
+      description: null,
+      brandColor: null,
+      requireBoardApprovalForNewAgents: true,
+    });
+    agentSvc.list.mockResolvedValue([]);
+    agentSvc.create.mockImplementation(async (_companyId: string, input: Record<string, unknown>) => ({
+      id: `agent-new-${String(input.name)}`,
+      name: String(input.name),
+      adapterType: input.adapterType,
+      adapterConfig: input.adapterConfig,
+      status: input.status,
+    }));
+
+    const result = await portability.importBundle({
+      source: {
+        type: "inline",
+        rootPath: exported.rootPath,
+        files: exported.files,
+      },
+      include: {
+        company: false,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+      target: {
+        mode: "existing_company",
+        companyId: "company-1",
+      },
+      agents: ["cmo"],
+      collisionStrategy: "rename",
+      allowNewAgents: true,
+    }, "user-1");
+
+    expect(agentSvc.create).toHaveBeenCalledWith("company-1", expect.objectContaining({
+      name: "CMO",
+      status: "idle",
+    }));
+    const cmoEntry = result.agents.find((entry) => entry.slug === "cmo");
+    expect(cmoEntry?.action).toBe("created");
+    expect(result.warnings.some((warning) =>
+      warning.includes("bypassed the target company") && warning.includes("cmo"),
+    )).toBe(true);
+  });
 });

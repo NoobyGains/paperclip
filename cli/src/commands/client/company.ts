@@ -76,6 +76,7 @@ interface CompanyImportOptions extends BaseClientOptions {
   paperclipUrl?: string;
   yes?: boolean;
   dryRun?: boolean;
+  allowNewAgents?: boolean;
 }
 
 const DEFAULT_EXPORT_INCLUDE: CompanyPortabilityInclude = {
@@ -1278,6 +1279,11 @@ export function registerCompanyCommands(program: Command): void {
       .option("--paperclip-url <url>", "Alias for --api-base on this command")
       .option("--yes", "Accept default selection and skip the pre-import confirmation prompt", false)
       .option("--dry-run", "Run preview only without applying", false)
+      .option(
+        "--allow-new-agents",
+        "Import new agents as idle even when the target company gates new agents behind board approval",
+        false,
+      )
       .action(async (fromPathOrUrl: string, opts: CompanyImportOptions) => {
         try {
           if (!opts.apiBase?.trim() && opts.paperclipUrl?.trim()) {
@@ -1437,6 +1443,7 @@ export function registerCompanyCommands(program: Command): void {
           const imported = await ctx.api.post<CompanyPortabilityImportResult>(importApiPath, {
             ...previewPayload,
             adapterOverrides,
+            ...(opts.allowNewAgents ? { allowNewAgents: true } : {}),
           });
           if (!imported) {
             throw new Error("Import request returned no data.");
