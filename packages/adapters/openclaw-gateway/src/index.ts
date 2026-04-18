@@ -1,5 +1,6 @@
 export const type = "openclaw_gateway";
 export const label = "OpenClaw Gateway";
+export const billingMode = "hybrid" as const;
 
 export const models: { id: string; label: string }[] = [];
 

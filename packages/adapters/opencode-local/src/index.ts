@@ -2,6 +2,7 @@ import type { AdapterModel } from "@paperclipai/adapter-utils";
 
 export const type = "opencode_local";
 export const label = "OpenCode (local)";
+export const billingMode = "subscription" as const;
 
 export const DEFAULT_OPENCODE_LOCAL_MODEL = "openai/gpt-5.2-codex";
 

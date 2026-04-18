@@ -2,6 +2,7 @@ import type { AdapterModel } from "@paperclipai/adapter-utils";
 
 export const type = "cursor";
 export const label = "Cursor CLI (local)";
+export const billingMode = "subscription" as const;
 export const DEFAULT_CURSOR_LOCAL_MODEL = "auto";
 
 export const models: AdapterModel[] = [
