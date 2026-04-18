@@ -3,7 +3,7 @@ import { generateKeyPairSync, randomUUID } from "node:crypto";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
 import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable, projectWorkspaces } from "@paperclipai/db";
-import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, not, sql } from "drizzle-orm";
 import {
   agentAdapterTypeSchema,
   agentSkillSyncSchema,
@@ -669,7 +669,7 @@ export function agentRoutes(db: Db) {
         .select()
         .from(projectWorkspaces)
         .where(eq(projectWorkspaces.projectId, agent.projectId))
-        .orderBy(projectWorkspaces.isPrimary, projectWorkspaces.createdAt)
+        .orderBy(desc(projectWorkspaces.isPrimary), asc(projectWorkspaces.createdAt))
         .limit(1)
         .then((rows) => rows[0] ?? null);
       projectRepoPath = workspace?.cwd ?? null;
