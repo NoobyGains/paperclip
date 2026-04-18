@@ -1,27 +1,10 @@
-// AdapterModel core fields (id + label) come from @paperclipai/adapter-utils.
-// The extended fields below (tier, recommendedFor, contextWindow, notes) are
-// defined here until migration 0060 / shared-types PR lands in adapter-utils
-// and the AdapterModel interface is officially widened.
-export interface CursorAdapterModel {
-  id: string;
-  label: string;
-  /** Capability tier: "thinking" = extended reasoning, "standard" = full capable, "mini" = fast/lightweight */
-  tier?: "thinking" | "standard" | "mini";
-  /** Use-case tags shown in the model picker UI */
-  recommendedFor?: string[];
-  /** Approximate context window in tokens */
-  contextWindow?: number;
-  /** Free-form note shown in the model picker UI */
-  notes?: string;
-}
+import type { AdapterModel } from "@paperclipai/adapter-utils";
 
 export const type = "cursor";
 export const label = "Cursor CLI (local)";
 export const DEFAULT_CURSOR_LOCAL_MODEL = "auto";
 
-// CursorAdapterModel is structurally a superset of AdapterModel, so it satisfies
-// the models: AdapterModel[] contract on ServerAdapterModule without a cast.
-export const models: CursorAdapterModel[] = [
+export const models: AdapterModel[] = [
   // ── Cursor routing ───────────────────────────────────────────────────────
   {
     id: "auto",
