@@ -144,5 +144,14 @@ export function createResourceDefinitions(
       mimeType: "application/json",
       read: async () => readJson(client, "/adapters"),
     },
+    {
+      name: "Setup recipe",
+      title: "Project onboarding recipe",
+      uri: "paperclip://setup/recipe",
+      description:
+        "End-to-end recipe for onboarding a project (or portfolio of projects) for this operator. Rendered at read time from the operator's profile, the hiring playbook, and the registered adapter list. Read this first when asked to 'set up my projects' or 'onboard my portfolio'.",
+      mimeType: "text/markdown",
+      read: async () => client.fetchRawText("/llms/setup-recipe.txt"),
+    },
   ];
 }
