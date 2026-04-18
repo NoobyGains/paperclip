@@ -1,7 +1,13 @@
+import type { AdapterModel } from "@paperclipai/adapter-utils";
+
 export const type = "pi_local";
 export const label = "Pi (local)";
 
-export const models: Array<{ id: string; label: string }> = [];
+// Pi discovers available models dynamically at runtime via `pi --list-models`.
+// This empty static list is a placeholder — the actual options are enumerated
+// by server/src/adapters/pi-models.ts at request time. See AdapterModel for
+// the enriched shape (tier, recommendedFor) that the live lister should emit.
+export const models: AdapterModel[] = [];
 
 export const agentConfigurationDoc = `# pi_local agent configuration
 

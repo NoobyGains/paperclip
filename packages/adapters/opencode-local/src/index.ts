@@ -1,14 +1,43 @@
+import type { AdapterModel } from "@paperclipai/adapter-utils";
+
 export const type = "opencode_local";
 export const label = "OpenCode (local)";
 
 export const DEFAULT_OPENCODE_LOCAL_MODEL = "openai/gpt-5.2-codex";
 
-export const models: Array<{ id: string; label: string }> = [
-  { id: DEFAULT_OPENCODE_LOCAL_MODEL, label: DEFAULT_OPENCODE_LOCAL_MODEL },
-  { id: "openai/gpt-5.4", label: "openai/gpt-5.4" },
-  { id: "openai/gpt-5.2", label: "openai/gpt-5.2" },
-  { id: "openai/gpt-5.1-codex-max", label: "openai/gpt-5.1-codex-max" },
-  { id: "openai/gpt-5.1-codex-mini", label: "openai/gpt-5.1-codex-mini" },
+export const models: AdapterModel[] = [
+  {
+    id: DEFAULT_OPENCODE_LOCAL_MODEL,
+    label: DEFAULT_OPENCODE_LOCAL_MODEL,
+    tier: "standard",
+    recommendedFor: ["coding"],
+    notes: "Default — coding-standard profile on OpenCode.",
+  },
+  {
+    id: "openai/gpt-5.4",
+    label: "openai/gpt-5.4",
+    tier: "fast",
+    recommendedFor: ["coding", "reasoning"],
+    notes: "Highest capability via OpenCode's OpenAI provider.",
+  },
+  {
+    id: "openai/gpt-5.2",
+    label: "openai/gpt-5.2",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "openai/gpt-5.1-codex-max",
+    label: "openai/gpt-5.1-codex-max",
+    tier: "thinking",
+    recommendedFor: ["reasoning", "research"],
+  },
+  {
+    id: "openai/gpt-5.1-codex-mini",
+    label: "openai/gpt-5.1-codex-mini",
+    tier: "mini",
+    recommendedFor: ["simple"],
+  },
 ];
 
 export const agentConfigurationDoc = `# opencode_local agent configuration
