@@ -7,7 +7,7 @@ export { assetService } from "./assets.js";
 export { documentService, extractLegacyPlanBody } from "./documents.js";
 export { projectService } from "./projects.js";
 export { issueService, type IssueFilters } from "./issues.js";
-export { githubIssueBridge, detectGitHubRepo, parseGitHubRemoteUrl, type GithubIssueBridgeResult } from "./github-issue-bridge.js";
+export { githubIssueBridge, detectGitHubRepo, parseGitHubRemoteUrl, type GithubIssueBridgeResult, type GithubIssueBridgeSyncOptions } from "./github-issue-bridge.js";
 export { issueApprovalService } from "./issue-approvals.js";
 export { goalService } from "./goals.js";
 export { activityService, type ActivityFilters } from "./activity.js";
