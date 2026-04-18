@@ -2,6 +2,11 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
 import {
+  getHiringProfile,
+  listHiringProfiles,
+  type HiringProfileId,
+} from "./hiring-profiles.js";
+import {
   addIssueCommentSchema,
   checkoutIssueSchema,
   createAgentHireSchema,
@@ -259,6 +264,8 @@ const TOOL_ANNOTATIONS: Record<string, PaperclipToolAnnotations> = {
   paperclipSetup: { ...READ_ONLY, title: "MCP setup validator" },
   paperclipGetAdapterModels: { ...READ_ONLY, title: "Adapter model list" },
   paperclipGetAdapterConfigSchema: { ...READ_ONLY, title: "Adapter config schema" },
+  paperclipListHiringProfiles: { ...READ_ONLY, title: "List hiring profiles" },
+  paperclipHireWithProfile: { ...SAFE_WRITE, title: "Hire with profile" },
   paperclipBootstrapApp: {
     ...SAFE_WRITE,
     title: "Bootstrap a paperclip app",
@@ -865,6 +872,76 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
       diagnoseCompanySchema,
       async ({ companyId, approvalAgeWarnHours }) =>
         diagnoseCompany(client, { companyId, approvalAgeWarnHours }),
+    ),
+    makeTool(
+      "paperclipListHiringProfiles",
+      "List the CEO hiring profiles (coding-heavy, coding-standard, coding-light, reasoning-heavy, reasoning-standard, reviewer, research). Each entry has the full expanded adapterType + adapterConfig + capabilities. Read this before picking a profile for a hire.",
+      z.object({}),
+      async () => listHiringProfiles(),
+    ),
+    makeTool(
+      "paperclipHireWithProfile",
+      "Hire a new agent using one of the CEO hiring profiles. Expands the profile into the full adapterType + adapterConfig + capabilities client-side, then POSTs to /api/companies/:id/agent-hires. Use this as your default hire path — it's shorter than paperclipCreateAgentHire and ensures the CEO's profile decisions are applied consistently.",
+      z.object({
+        name: z.string().min(1).max(120),
+        role: z.string().min(1).max(64),
+        title: z.string().max(200).nullable().optional(),
+        icon: z.string().max(60).nullable().optional(),
+        reportsTo: z.string().uuid().nullable().optional(),
+        capabilities: z.string().max(1000).optional(),
+        desiredSkills: z.array(z.string().min(1)).optional(),
+        profile: z.enum([
+          "coding-heavy",
+          "coding-standard",
+          "coding-light",
+          "reasoning-heavy",
+          "reasoning-standard",
+          "reviewer",
+          "research",
+        ]),
+        adapterConfigOverride: z.record(z.unknown()).optional(),
+        companyId: companyIdOptional,
+        sourceIssueId: z.string().uuid().optional().nullable(),
+      }),
+      async (input) => {
+        const profile = getHiringProfile(input.profile as HiringProfileId);
+        if (!profile) {
+          throw new Error(`unknown hiring profile: ${input.profile}`);
+        }
+        const mergedAdapterConfig = {
+          ...profile.adapterConfig,
+          ...(input.adapterConfigOverride ?? {}),
+        };
+        const body: Record<string, unknown> = {
+          name: input.name,
+          role: input.role,
+          adapterType: profile.adapterType,
+          adapterConfig: mergedAdapterConfig,
+          // Capabilities flag is still in-flight on the server (issue #14 L3).
+          // Until the server accepts it natively, we translate webSearch=true
+          // into the codex `search: true` adapter-config key here so the
+          // profile produces the right adapter behavior end-to-end today.
+        };
+        if (input.title !== undefined) body.title = input.title;
+        if (input.icon !== undefined) body.icon = input.icon;
+        if (input.reportsTo !== undefined) body.reportsTo = input.reportsTo;
+        if (input.capabilities !== undefined) body.capabilities = input.capabilities;
+        if (input.desiredSkills !== undefined) body.desiredSkills = input.desiredSkills;
+        if (input.sourceIssueId !== undefined) body.sourceIssueId = input.sourceIssueId;
+
+        // Until the server L3 capabilities translator ships, translate
+        // webSearch on codex_local into adapterConfig.search=true client-side
+        // so the effect is visible end-to-end.
+        if (profile.capabilities.webSearch && profile.adapterType === "codex_local") {
+          (body.adapterConfig as Record<string, unknown>).search = true;
+        }
+
+        return client.requestJson(
+          "POST",
+          `/companies/${client.resolveCompanyId(input.companyId)}/agent-hires`,
+          { body },
+        );
+      },
     ),
     makeTool(
       "paperclipGetAdapterModels",

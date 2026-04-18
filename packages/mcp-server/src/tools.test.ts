@@ -291,6 +291,96 @@ describe("paperclip MCP tools", () => {
     expect(tool.annotations?.openWorldHint).toBe(true);
   });
 
+  it("paperclipListHiringProfiles returns all seven profiles with expanded adapterConfig", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const tool = getTool("paperclipListHiringProfiles");
+    const response = await tool.execute({});
+    const payload = JSON.parse(response.content[0]!.text);
+    expect(Array.isArray(payload)).toBe(true);
+    expect(payload).toHaveLength(7);
+    const ids = payload.map((p: { id: string }) => p.id).sort();
+    expect(ids).toEqual([
+      "coding-heavy",
+      "coding-light",
+      "coding-standard",
+      "reasoning-heavy",
+      "reasoning-standard",
+      "research",
+      "reviewer",
+    ]);
+    const codingHeavy = payload.find((p: { id: string }) => p.id === "coding-heavy");
+    expect(codingHeavy.adapterType).toBe("codex_local");
+    expect(codingHeavy.adapterConfig.model).toBe("gpt-5.4");
+    expect(codingHeavy.capabilities.webSearch).toBe(true);
+  });
+
+  it("paperclipHireWithProfile expands coding-heavy into codex_local + gpt-5.4 + search=true", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockJsonResponse({ id: "agent-new", name: "Backend Eng" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipHireWithProfile");
+    await tool.execute({
+      name: "Backend Eng",
+      role: "engineer",
+      profile: "coding-heavy",
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe(
+      "http://localhost:3100/api/companies/11111111-1111-1111-1111-111111111111/agent-hires",
+    );
+    expect(init.method).toBe("POST");
+    const body = JSON.parse(String(init.body));
+    expect(body.adapterType).toBe("codex_local");
+    expect(body.adapterConfig.model).toBe("gpt-5.4");
+    expect(body.adapterConfig.search).toBe(true);
+    expect(body.adapterConfig.fastMode).toBe(true);
+    expect(body.adapterConfig.modelReasoningEffort).toBe("high");
+  });
+
+  it("paperclipHireWithProfile reviewer profile maps to claude_local + Opus 4.7", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockJsonResponse({ id: "reviewer-1" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipHireWithProfile");
+    await tool.execute({
+      name: "Reviewer",
+      role: "researcher",
+      profile: "reviewer",
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(init.body));
+    expect(body.adapterType).toBe("claude_local");
+    expect(body.adapterConfig.model).toBe("claude-opus-4-7");
+    expect(body.adapterConfig.effort).toBe("high");
+    // claude_local doesn't take adapterConfig.search — the webSearch capability
+    // falls through to L3's skill-injection path once that ships.
+    expect(body.adapterConfig.search).toBeUndefined();
+  });
+
+  it("paperclipHireWithProfile applies adapterConfigOverride after the profile", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse({ id: "a" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipHireWithProfile");
+    await tool.execute({
+      name: "Dev",
+      role: "engineer",
+      profile: "coding-standard",
+      adapterConfigOverride: { model: "gpt-5.4" },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(init.body));
+    expect(body.adapterConfig.model).toBe("gpt-5.4"); // override wins
+    expect(body.adapterConfig.modelReasoningEffort).toBe("medium"); // profile preserved
+  });
+
   it("paperclipBootstrapApp chains create-company → patch settings → create CEO → create project", async () => {
     const calls: Array<{ method: string; url: string; body: unknown }> = [];
     const fetchMock = vi.fn().mockImplementation(async (url: URL | string, init?: RequestInit) => {
