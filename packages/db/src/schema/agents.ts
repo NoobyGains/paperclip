@@ -15,6 +15,9 @@ export const agents = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     companyId: uuid("company_id").notNull().references(() => companies.id),
+    // FK to projects.id — defined via SQL migration only to avoid a circular
+    // schema import (projects.ts already imports agents.ts).
+    projectId: uuid("project_id"),
     name: text("name").notNull(),
     role: text("role").notNull().default("general"),
     title: text("title"),
