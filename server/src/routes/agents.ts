@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
-import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable } from "@paperclipai/db";
+import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable, projectWorkspaces } from "@paperclipai/db";
 import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
 import {
   agentAdapterTypeSchema,
@@ -645,6 +645,7 @@ export function agentRoutes(db: Db) {
     role: string;
     adapterType: string;
     adapterConfig: unknown;
+    projectId?: string | null;
   }>(agent: T): Promise<T> {
     if (!adapterSupportsInstructionsBundle(agent.adapterType)) {
       return agent;
@@ -661,11 +662,27 @@ export function agentRoutes(db: Db) {
       return agent;
     }
 
+    // Resolve project repo path from projectId so CEO overlay files can be loaded.
+    let projectRepoPath: string | null = null;
+    if (agent.projectId) {
+      const workspace = await db
+        .select()
+        .from(projectWorkspaces)
+        .where(eq(projectWorkspaces.projectId, agent.projectId))
+        .orderBy(projectWorkspaces.isPrimary, projectWorkspaces.createdAt)
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      projectRepoPath = workspace?.cwd ?? null;
+    }
+
     const promptTemplate = typeof adapterConfig.promptTemplate === "string"
       ? adapterConfig.promptTemplate
       : "";
     const files = promptTemplate.trim().length === 0
-      ? await loadDefaultAgentInstructionsBundle(resolveDefaultAgentInstructionsBundleRole(agent.role))
+      ? await loadDefaultAgentInstructionsBundle(
+          resolveDefaultAgentInstructionsBundleRole(agent.role),
+          { projectRepoPath },
+        )
       : { "AGENTS.md": promptTemplate };
     const materialized = await instructions.materializeManagedBundle(
       agent,
