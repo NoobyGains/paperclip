@@ -322,6 +322,9 @@ const TOOL_ANNOTATIONS: Record<string, PaperclipToolAnnotations> = {
     openWorldHint: true, // may reach GitHub API
     title: "Discover portfolio projects",
   },
+
+  // F2 — project archetype detection
+  paperclipDetectProjectArchetype: { ...READ_ONLY, title: "Detect project archetype" },
 };
 
 // ---------------------------------------------------------------------------
@@ -1306,6 +1309,12 @@ export function createToolDefinitions(
           ],
         };
       },
+    ),
+    makeTool(
+      "paperclipDetectProjectArchetype",
+      "Read a local repo and return its archetype descriptor: stack (pnpm-monorepo, npm-single, python-poetry, rust-cargo, go-modules, dotnet, unknown), package manager, common commands (test/migration/lint/build), architecture doc path, existing CLAUDE.md/AGENTS.md locations, and workspaces. Used by onboarding to pick team shapes and seed CEO overlays.",
+      z.object({ repoPath: z.string().min(1).max(1024) }),
+      async ({ repoPath }) => client.detectProjectArchetype(repoPath),
     ),
     makeTool(
       "paperclipApiRequest",

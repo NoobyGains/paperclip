@@ -662,4 +662,24 @@ describe("paperclip MCP tools", () => {
       expect(profileCalls.length).toBe(1);
     });
   });
+
+  it("paperclipDetectProjectArchetype forwards repoPath and returns descriptor", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockJsonResponse({ stack: "pnpm-monorepo", packageManager: "pnpm" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipDetectProjectArchetype");
+    const response = await tool.execute({ repoPath: "/path/to/repo" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe("http://localhost:3100/api/project-archetype/detect");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ repoPath: "/path/to/repo" });
+
+    const payload = JSON.parse(response.content[0]!.text);
+    expect(payload.stack).toBe("pnpm-monorepo");
+    expect(payload.packageManager).toBe("pnpm");
+  });
 });
