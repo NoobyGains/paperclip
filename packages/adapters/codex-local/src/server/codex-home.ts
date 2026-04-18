@@ -8,7 +8,6 @@ const COPIED_SHARED_FILES = ["config.json", "config.toml", "instructions.md"] as
 const SYMLINKED_SHARED_FILES = ["auth.json"] as const;
 const DEFAULT_PAPERCLIP_INSTANCE_ID = "default";
 const SANDBOX_WORKSPACE_WRITE_SECTION = "sandbox_workspace_write";
-const SANDBOX_WORKSPACE_WRITE_NETWORK_ACCESS_LINE = "network_access = true";
 
 function nonEmpty(value: string | undefined): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -73,10 +72,11 @@ async function ensureCopiedFile(target: string, source: string): Promise<void> {
   await fs.copyFile(source, target);
 }
 
-function upsertWorkspaceWriteNetworkAccessToml(content: string): string {
+export function upsertWorkspaceWriteNetworkAccessToml(content: string, enabled: boolean): string {
   const normalized = content.replace(/\r\n/g, "\n");
   const lines = normalized.length > 0 ? normalized.split("\n") : [];
   const sectionHeader = `[${SANDBOX_WORKSPACE_WRITE_SECTION}]`;
+  const networkAccessLine = `network_access = ${enabled ? "true" : "false"}`;
   const sectionIndex = lines.findIndex((line) => line.trim() === sectionHeader);
 
   if (sectionIndex >= 0) {
@@ -96,15 +96,15 @@ function upsertWorkspaceWriteNetworkAccessToml(content: string): string {
     );
 
     if (networkAccessIndex >= 0) {
-      lines[networkAccessIndex] = SANDBOX_WORKSPACE_WRITE_NETWORK_ACCESS_LINE;
+      lines[networkAccessIndex] = networkAccessLine;
     } else {
-      lines.splice(sectionIndex + 1, 0, SANDBOX_WORKSPACE_WRITE_NETWORK_ACCESS_LINE);
+      lines.splice(sectionIndex + 1, 0, networkAccessLine);
     }
   } else {
     if (lines.length > 0 && lines[lines.length - 1] !== "") {
       lines.push("");
     }
-    lines.push(sectionHeader, SANDBOX_WORKSPACE_WRITE_NETWORK_ACCESS_LINE);
+    lines.push(sectionHeader, networkAccessLine);
   }
 
   const next = lines.join("\n");
@@ -114,24 +114,36 @@ function upsertWorkspaceWriteNetworkAccessToml(content: string): string {
 async function ensureWorkspaceWriteNetworkAccessConfig(
   targetHome: string,
   onLog: AdapterExecutionContext["onLog"],
+  enabled: boolean,
 ): Promise<void> {
   const targetConfigPath = path.join(targetHome, "config.toml");
   const existingConfig = await fs.readFile(targetConfigPath, "utf8").catch(() => "");
-  const nextConfig = upsertWorkspaceWriteNetworkAccessToml(existingConfig);
+  const nextConfig = upsertWorkspaceWriteNetworkAccessToml(existingConfig, enabled);
   if (nextConfig === existingConfig) return;
   await ensureParentDir(targetConfigPath);
   await fs.writeFile(targetConfigPath, nextConfig, "utf8");
   await onLog(
     "stdout",
-    `[paperclip] Enabled sandbox_workspace_write.network_access in managed Codex config "${targetConfigPath}".\n`,
+    `[paperclip] ${enabled ? "Enabled" : "Disabled"} sandbox_workspace_write.network_access in managed Codex config "${targetConfigPath}".\n`,
   );
+}
+
+export interface PrepareManagedCodexHomeOptions {
+  /**
+   * When true (the default), writes `[sandbox_workspace_write] network_access = true`
+   * to the managed config.toml so sandboxed Codex agents can reach the Paperclip API
+   * over loopback. Set to false to explicitly opt out (air-gapped / stricter deployments).
+   */
+  sandboxLoopbackEnabled?: boolean;
 }
 
 export async function prepareManagedCodexHome(
   env: NodeJS.ProcessEnv,
   onLog: AdapterExecutionContext["onLog"],
   companyId?: string,
+  options: PrepareManagedCodexHomeOptions = {},
 ): Promise<string> {
+  const sandboxLoopbackEnabled = options.sandboxLoopbackEnabled ?? true;
   const targetHome = resolveManagedCodexHomeDir(env, companyId);
 
   const sourceHome = resolveSharedCodexHomeDir(env);
@@ -151,7 +163,7 @@ export async function prepareManagedCodexHome(
     await ensureCopiedFile(path.join(targetHome, name), source);
   }
 
-  await ensureWorkspaceWriteNetworkAccessConfig(targetHome, onLog);
+  await ensureWorkspaceWriteNetworkAccessConfig(targetHome, onLog, sandboxLoopbackEnabled);
 
   await onLog(
     "stdout",

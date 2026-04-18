@@ -84,6 +84,16 @@ export function CompanySettings() {
     }
   });
 
+  const codexLoopbackMutation = useMutation({
+    mutationFn: (enabled: boolean) =>
+      companiesApi.update(selectedCompanyId!, {
+        codexSandboxLoopbackEnabled: enabled,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
+    },
+  });
+
   const feedbackSharingMutation = useMutation({
     mutationFn: (enabled: boolean) =>
       companiesApi.update(selectedCompanyId!, {
@@ -413,6 +423,22 @@ export function CompanySettings() {
             checked={!!selectedCompany.requireBoardApprovalForNewAgents}
             onChange={(v) => settingsMutation.mutate(v)}
             toggleTestId="company-settings-team-approval-toggle"
+          />
+        </div>
+      </div>
+
+      {/* Codex sandbox */}
+      <div className="space-y-4" data-testid="company-settings-codex-section">
+        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Codex sandbox
+        </div>
+        <div className="rounded-md border border-border px-4 py-3">
+          <ToggleField
+            label="Allow Codex agents to reach Paperclip over loopback"
+            hint="Writes [sandbox_workspace_write] network_access = true to the managed Codex config so sandboxed agents can call the Paperclip API on localhost. Turn this off for air-gapped or stricter deployments."
+            checked={selectedCompany.codexSandboxLoopbackEnabled !== false}
+            onChange={(v) => codexLoopbackMutation.mutate(v)}
+            toggleTestId="company-settings-codex-loopback-toggle"
           />
         </div>
       </div>

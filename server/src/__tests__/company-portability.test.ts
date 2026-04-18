@@ -2719,4 +2719,102 @@ describe("company portability", () => {
       warning.includes("bypassed the target company") && warning.includes("cmo"),
     )).toBe(true);
   });
+
+  it("round-trips a disabled codexSandboxLoopbackEnabled setting through export and import", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    agentSvc.list.mockResolvedValue([]);
+    projectSvc.list.mockResolvedValue([]);
+    companySvc.getById.mockResolvedValue({
+      id: "company-1",
+      name: "Paperclip",
+      description: null,
+      issuePrefix: "PAP",
+      brandColor: "#5c5fff",
+      logoAssetId: null,
+      logoUrl: null,
+      requireBoardApprovalForNewAgents: true,
+      codexSandboxLoopbackEnabled: false,
+      feedbackDataSharingEnabled: false,
+      feedbackDataSharingConsentAt: null,
+      feedbackDataSharingConsentByUserId: null,
+      feedbackDataSharingTermsVersion: null,
+    });
+
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: false,
+        projects: false,
+        issues: false,
+      },
+    });
+
+    expect(exported.manifest.company?.codexSandboxLoopbackEnabled).toBe(false);
+    const extension = asTextFile(exported.files[".paperclip.yaml"]);
+    expect(extension).toContain("codexSandboxLoopbackEnabled: false");
+
+    companySvc.create.mockResolvedValue({
+      id: "company-imported",
+      name: "Imported Paperclip",
+      codexSandboxLoopbackEnabled: false,
+    });
+
+    await portability.importBundle({
+      source: {
+        type: "inline",
+        rootPath: exported.rootPath,
+        files: exported.files,
+      },
+      include: {
+        company: true,
+        agents: false,
+        projects: false,
+        issues: false,
+      },
+      target: {
+        mode: "new_company",
+        newCompanyName: "Imported Paperclip",
+      },
+      agents: "all",
+      collisionStrategy: "rename",
+    }, "user-1");
+
+    expect(companySvc.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        codexSandboxLoopbackEnabled: false,
+      }),
+    );
+  });
+
+  it("defaults codexSandboxLoopbackEnabled to true on export when a company has it enabled", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    agentSvc.list.mockResolvedValue([]);
+    projectSvc.list.mockResolvedValue([]);
+    companySvc.getById.mockResolvedValue({
+      id: "company-1",
+      name: "Paperclip",
+      description: null,
+      issuePrefix: "PAP",
+      brandColor: "#5c5fff",
+      logoAssetId: null,
+      logoUrl: null,
+      requireBoardApprovalForNewAgents: true,
+      codexSandboxLoopbackEnabled: true,
+    });
+
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: false,
+        projects: false,
+        issues: false,
+      },
+    });
+
+    expect(exported.manifest.company?.codexSandboxLoopbackEnabled).toBe(true);
+    const extension = asTextFile(exported.files[".paperclip.yaml"]);
+    expect(extension).not.toContain("codexSandboxLoopbackEnabled");
+  });
 });

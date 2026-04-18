@@ -16,6 +16,9 @@ export const companies = pgTable(
     requireBoardApprovalForNewAgents: boolean("require_board_approval_for_new_agents")
       .notNull()
       .default(true),
+    codexSandboxLoopbackEnabled: boolean("codex_sandbox_loopback_enabled")
+      .notNull()
+      .default(true),
     feedbackDataSharingEnabled: boolean("feedback_data_sharing_enabled")
       .notNull()
       .default(false),

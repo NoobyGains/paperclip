@@ -10,6 +10,7 @@ import {
   agentRuntimeState,
   agentTaskSessions,
   agentWakeupRequests,
+  companies,
   companySkills as companySkillsTable,
   heartbeatRunEvents,
   heartbeatRuns,
@@ -1511,6 +1512,19 @@ export function heartbeatService(db: Db) {
       .from(agents)
       .where(eq(agents.id, agentId))
       .then((rows) => rows[0] ?? null);
+  }
+
+  async function getCompanyAdapterSettings(companyId: string) {
+    const row = await db
+      .select({
+        codexSandboxLoopbackEnabled: companies.codexSandboxLoopbackEnabled,
+      })
+      .from(companies)
+      .where(eq(companies.id, companyId))
+      .then((rows) => rows[0] ?? null);
+    return {
+      codexSandboxLoopbackEnabled: row?.codexSandboxLoopbackEnabled ?? true,
+    };
   }
 
   async function getRun(runId: string, opts?: { unsafeFullResultJson?: boolean }) {
@@ -3624,6 +3638,10 @@ export function heartbeatService(db: Db) {
       })(),
     };
     context.paperclipWorkspaces = resolvedWorkspace.workspaceHints;
+    const companyAdapterSettings = await getCompanyAdapterSettings(agent.companyId);
+    context.paperclipCompany = {
+      codexSandboxLoopbackEnabled: companyAdapterSettings.codexSandboxLoopbackEnabled,
+    };
     const runtimeServiceIntents = (() => {
       const runtimeConfig = parseObject(resolvedConfig.workspaceRuntime);
       return Array.isArray(runtimeConfig.services)
