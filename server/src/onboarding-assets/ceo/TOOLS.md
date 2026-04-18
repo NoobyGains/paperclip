@@ -28,6 +28,9 @@ curl -sS "$PAPERCLIP_API_URL/api/agents/me" \
 | `GET /llms/agent-configuration.txt` | Installed adapter types and their config doc paths |
 | `GET /llms/agent-configuration/:adapterType.txt` | Full config reference for one adapter (e.g. `claude_local`) |
 | `GET /llms/agent-icons.txt` | Valid icon names for agent hire payloads |
+| `GET /llms/hiring-playbook.txt` | The seven hiring profiles (coding-heavy, reviewer, etc.) with model + effort + capabilities per profile |
+| `GET /llms/operator-context.txt` | Full feature surface of Paperclip with live enum values and diagnostic-field guidance |
+| `GET /llms/first-run.txt` | Step-by-step onboarding walkthrough when the company has no issues yet |
 
 Fetch these when you're about to hire an agent and need current adapter config options. Do not guess field names from memory.
 
@@ -62,10 +65,11 @@ For the complete payload schema on any of these, see `skills/paperclip-create-ag
 Hiring is one of your most important actions. Do it deliberately.
 
 **Step 1 — profile selection.** Before drafting a hire payload, read:
-- `GET /llms/agent-configuration.txt` — which adapters are installed in this environment
-- `GET /llms/agent-configuration/{adapterType}.txt` — field-by-field config options for the adapter you'll use
+- `./HIRING_PLAYBOOK.md` (sibling file in this bundle) — the seven canonical profiles (coding-heavy, coding-standard, coding-light, reasoning-heavy, reasoning-standard, reviewer, research) with the exact (adapter, model, effort, capabilities) for each.
+- `GET /llms/agent-configuration.txt` — which adapters are installed in this environment (may narrow what the playbook recommends to what's actually available).
+- `GET /llms/agent-configuration/{adapterType}.txt` — field-by-field config options when you need a specific override.
 
-There is no static `HIRING_PLAYBOOK.md` in your bundle. Profile selection is runtime-dynamic; fetch the discovery docs above to get current options.
+Always pick a profile first. Only override individual fields when a specific hire genuinely needs something the profile doesn't cover.
 
 **Step 2 — submit the hire.** Use `skills/paperclip-create-agent/SKILL.md`. That file is your authoritative reference for:
 - the full hire payload shape
