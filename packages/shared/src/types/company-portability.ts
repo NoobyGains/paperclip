@@ -37,6 +37,9 @@ export interface CompanyPortabilityCompanyManifestEntry {
   requireBoardApprovalForNewAgents: boolean;
   codexSandboxLoopbackEnabled: boolean;
   autoHireEnabled: boolean;
+  defaultHireAdapter: string | null;
+  defaultReviewerAgentId: string | null;
+  autoReviewEnabled: boolean;
   feedbackDataSharingEnabled: boolean;
   feedbackDataSharingConsentAt: string | null;
   feedbackDataSharingConsentByUserId: string | null;

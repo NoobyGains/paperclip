@@ -14,6 +14,9 @@ export interface Company {
   requireBoardApprovalForNewAgents: boolean;
   codexSandboxLoopbackEnabled: boolean;
   autoHireEnabled: boolean;
+  defaultHireAdapter: string | null;
+  defaultReviewerAgentId: string | null;
+  autoReviewEnabled: boolean;
   feedbackDataSharingEnabled: boolean;
   feedbackDataSharingConsentAt: Date | null;
   feedbackDataSharingConsentByUserId: string | null;

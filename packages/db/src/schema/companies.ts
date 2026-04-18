@@ -20,6 +20,9 @@ export const companies = pgTable(
       .notNull()
       .default(true),
     autoHireEnabled: boolean("auto_hire_enabled").notNull().default(false),
+    defaultHireAdapter: text("default_hire_adapter"),
+    defaultReviewerAgentId: uuid("default_reviewer_agent_id"),
+    autoReviewEnabled: boolean("auto_review_enabled").notNull().default(false),
     feedbackDataSharingEnabled: boolean("feedback_data_sharing_enabled")
       .notNull()
       .default(false),

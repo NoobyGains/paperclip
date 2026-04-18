@@ -421,6 +421,13 @@
       "when": 1776556800000,
       "tag": "0059_auto_hire_enabled",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1776643200000,
+      "tag": "0060_adapter_defaults",
+      "breakpoints": true
     }
   ]
 }
