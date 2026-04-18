@@ -1,3 +1,5 @@
+// skipped on Windows — embedded-postgres holds file handles after stop(),
+// causing EPERM on rmSync in afterAll (issue #33)
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -7,6 +9,8 @@ import { createServer } from "node:http";
 import { and, asc, eq } from "drizzle-orm";
 import { WebSocketServer } from "ws";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+const isWindows = process.platform === "win32";
 import {
   agents,
   agentWakeupRequests,
@@ -216,7 +220,7 @@ async function createControlledGatewayServer() {
   };
 }
 
-describe("heartbeat comment wake batching", () => {
+describe.skipIf(isWindows)("heartbeat comment wake batching", () => {
   let db!: ReturnType<typeof createDb>;
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";

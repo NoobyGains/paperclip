@@ -1,3 +1,5 @@
+// symlink test skipped on Windows — creating symlinks requires elevated privileges
+// or Developer Mode on Windows (issue #33)
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,6 +8,8 @@ import {
   listPaperclipSkillEntries,
   removeMaintainerOnlySkillSymlinks,
 } from "@paperclipai/adapter-utils/server-utils";
+
+const isWindows = process.platform === "win32";
 
 async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -35,7 +39,7 @@ describe("paperclip skill utils", () => {
     expect(entries[0]?.source).toBe(path.join(root, "skills", "paperclip"));
   });
 
-  it("removes stale maintainer-only symlinks from a shared skills home", async () => {
+  it.skipIf(isWindows)("removes stale maintainer-only symlinks from a shared skills home", async () => {
     const root = await makeTempDir("paperclip-skill-cleanup-");
     cleanupDirs.add(root);
 

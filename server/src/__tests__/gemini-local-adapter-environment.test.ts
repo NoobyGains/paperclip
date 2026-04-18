@@ -1,8 +1,12 @@
+// skipped on Windows (probe/quota tests) — fake gemini script uses #!/usr/bin/env node
+// shebang which Windows cannot execute directly (issue #33)
 import { describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { testEnvironment } from "@paperclipai/adapter-gemini-local/server";
+
+const isWindows = process.platform === "win32";
 
 async function writeFakeGeminiCommand(binDir: string, argsCapturePath: string): Promise<string> {
   const commandPath = path.join(binDir, "gemini");
@@ -67,7 +71,7 @@ describe("gemini_local environment diagnostics", () => {
     await fs.rm(path.dirname(cwd), { recursive: true, force: true });
   });
 
-  it("passes model and yolo flags to the hello probe", async () => {
+  it.skipIf(isWindows)("passes model and yolo flags to the hello probe", async () => {
     const root = path.join(
       os.tmpdir(),
       `paperclip-gemini-local-probe-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -104,7 +108,7 @@ describe("gemini_local environment diagnostics", () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
-  it("classifies quota exhaustion as a quota warning instead of a generic failure", async () => {
+  it.skipIf(isWindows)("classifies quota exhaustion as a quota warning instead of a generic failure", async () => {
     const root = path.join(
       os.tmpdir(),
       `paperclip-gemini-local-quota-${Date.now()}-${Math.random().toString(16).slice(2)}`,

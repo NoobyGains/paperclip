@@ -1,8 +1,12 @@
+// probe test skipped on Windows — fake opencode script uses #!/bin/sh shebang which
+// Windows cannot execute directly (issue #33)
 import { describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { testEnvironment } from "@paperclipai/adapter-opencode-local/server";
+
+const isWindows = process.platform === "win32";
 
 describe("opencode_local environment diagnostics", () => {
   it("reports a missing working directory as an error when cwd is absolute", async () => {
@@ -59,7 +63,7 @@ describe("opencode_local environment diagnostics", () => {
     }
   });
 
-  it("classifies ProviderModelNotFoundError probe output as model-unavailable warning", async () => {
+  it.skipIf(isWindows)("classifies ProviderModelNotFoundError probe output as model-unavailable warning", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-opencode-env-probe-cwd-"));
     const binDir = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-opencode-env-probe-bin-"));
     const fakeOpencode = path.join(binDir, "opencode");

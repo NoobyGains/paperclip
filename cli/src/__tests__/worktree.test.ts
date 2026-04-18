@@ -1,9 +1,14 @@
+// some tests skipped on Windows — path comparison tests embed Unix paths, permission
+// bit checks (mode & 0o111) do not apply on Windows, and worktree env file parsing
+// differs due to path separator differences (issue #33)
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const isWindows = process.platform === "win32";
 import {
   agents,
   authUsers,
@@ -615,7 +620,7 @@ describe("worktree helpers", () => {
     );
   });
 
-  it("derives worktree reseed target paths from the adjacent env file", () => {
+  it.skipIf(isWindows)("derives worktree reseed target paths from the adjacent env file", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-worktree-reseed-target-"));
     const worktreeRoot = path.join(tempRoot, "repo");
     const configPath = path.join(worktreeRoot, ".paperclip", "config.json");
@@ -828,7 +833,7 @@ describe("worktree helpers", () => {
     }
   });
 
-  it("rebinds same-repo workspace paths onto the current worktree root", () => {
+  it.skipIf(isWindows)("rebinds same-repo workspace paths onto the current worktree root", () => {
     expect(
       rebindWorkspaceCwd({
         sourceRepoRoot: "/Users/example/paperclip",
@@ -856,7 +861,7 @@ describe("worktree helpers", () => {
     ).toBeNull();
   });
 
-  it("copies shared git hooks into a linked worktree git dir", () => {
+  it.skipIf(isWindows)("copies shared git hooks into a linked worktree git dir", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-worktree-hooks-"));
     const repoRoot = path.join(tempRoot, "repo");
     const worktreePath = path.join(tempRoot, "repo-feature");
