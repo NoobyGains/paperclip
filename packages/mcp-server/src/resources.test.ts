@@ -178,4 +178,51 @@ describe("paperclip MCP resources", () => {
     expect(String(url)).toBe("http://localhost:3100/llms/setup-recipe.txt");
     expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer token-abc");
   });
+
+  describe("R1 — paperclip://archetypes resource", () => {
+    it("is present in the resource list with the correct URI and mimeType", () => {
+      const resources = createResourceDefinitions(makeClient());
+      const r = resources.find((res) => res.uri === "paperclip://archetypes");
+      expect(r).toBeDefined();
+      expect(r!.mimeType).toBe("application/json");
+    });
+
+    it("read() returns valid JSON with all 7 archetype stacks", async () => {
+      // No network needed — pure in-memory registry
+      const text = await findResource("Archetypes").read();
+      const entries = JSON.parse(text) as Array<{ stack: string; shape: unknown }>;
+      expect(Array.isArray(entries)).toBe(true);
+      expect(entries).toHaveLength(7);
+      const stacks = entries.map((e) => e.stack).sort();
+      expect(stacks).toEqual([
+        "dotnet",
+        "go-modules",
+        "npm-single",
+        "pnpm-monorepo",
+        "python-poetry",
+        "rust-cargo",
+        "unknown",
+      ]);
+    });
+
+    it("read() does not make any network calls", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      await findResource("Archetypes").read();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("pnpm-monorepo shape includes cto, two engineers, qa, and reviewer slots", async () => {
+      const text = await findResource("Archetypes").read();
+      const entries = JSON.parse(text) as Array<{ stack: string; shape: { roles: Array<{ role: string; profile: string }> } }>;
+      const entry = entries.find((e) => e.stack === "pnpm-monorepo");
+      expect(entry).toBeDefined();
+      const roles = entry!.shape.roles.map((r) => r.role);
+      expect(roles).toContain("cto");
+      expect(roles).toContain("qa");
+      expect(roles).toContain("reviewer");
+      expect(roles.filter((r) => r === "engineer")).toHaveLength(2);
+    });
+  });
 });

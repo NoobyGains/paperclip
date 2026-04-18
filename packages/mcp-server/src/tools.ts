@@ -7,6 +7,7 @@ import {
   listHiringProfiles,
   type HiringProfileId,
 } from "./hiring-profiles.js";
+import { getTeamShape, listTeamShapes } from "@paperclipai/shared";
 import {
   addIssueCommentSchema,
   checkoutIssueSchema,
@@ -326,6 +327,9 @@ const TOOL_ANNOTATIONS: Record<string, PaperclipToolAnnotations> = {
 
   // F2 — project archetype detection
   paperclipDetectProjectArchetype: { ...READ_ONLY, title: "Detect project archetype" },
+
+  // R1 — team-shape registry
+  paperclipGetTeamShape: { ...READ_ONLY, title: "Get team shape for archetype" },
 };
 
 // ---------------------------------------------------------------------------
@@ -1363,6 +1367,36 @@ export function createToolDefinitions(
           rootPath,
           github,
         });
+      },
+    ),
+    makeTool(
+      "paperclipGetTeamShape",
+      "Return the default team shape for a given project archetype stack (pnpm-monorepo, npm-single, python-poetry, rust-cargo, go-modules, dotnet, unknown). Each shape is a list of role slots with their hiring-profile IDs. Use this after paperclipDetectProjectArchetype to decide which agents to pre-hire for a new project. Omit archetype (or pass 'unknown') to get the minimal fallback shape.",
+      z.object({
+        archetype: z
+          .enum([
+            "pnpm-monorepo",
+            "npm-single",
+            "python-poetry",
+            "rust-cargo",
+            "go-modules",
+            "dotnet",
+            "unknown",
+          ])
+          .optional()
+          .default("unknown")
+          .describe("Archetype stack key returned by paperclipDetectProjectArchetype."),
+        includeAll: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe("When true, return all shapes in the registry instead of a single archetype."),
+      }),
+      async ({ archetype, includeAll }) => {
+        if (includeAll) {
+          return listTeamShapes();
+        }
+        return { archetype, shape: getTeamShape(archetype) };
       },
     ),
   ];
