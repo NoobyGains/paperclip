@@ -121,6 +121,7 @@ export interface AdapterExecutionContext {
   onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
   onMeta?: (meta: AdapterInvocationMeta) => Promise<void>;
   onSpawn?: (meta: { pid: number; processGroupId: number | null; startedAt: string }) => Promise<void>;
+  onStdinWritten?: (meta: { stdinWriteAt: string }) => void;
   authToken?: string;
 }
 

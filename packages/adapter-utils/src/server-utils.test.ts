@@ -21,16 +21,25 @@ async function waitForPidExit(pid: number, timeoutMs = 2_000) {
 }
 
 describe("runChildProcess", () => {
-  it("waits for onSpawn before sending stdin to the child", async () => {
-    const spawnDelayMs = 150;
-    const startedAt = Date.now();
+  it("sends stdin to the child without waiting for onSpawn to resolve", async () => {
+    // Secondary fix for NoobyGains/paperclip#15: stdin must be written
+    // immediately after spawn, NOT gated on the DB-persist promise
+    // (spawnPersistPromise / onSpawn).  runChildProcess must resolve before
+    // the slow onSpawn callback finishes, proving stdin was not gated on it.
+    const spawnDelayMs = 300;
+    let runProcessResolvedAt = 0;
     let onSpawnCompletedAt = 0;
+
+    // Hold a reference to the onSpawn promise so we can await it after the
+    // run resolves (runChildProcess does NOT await spawnPersistPromise).
+    let onSpawnPromise: Promise<void> = Promise.resolve();
 
     const result = await runChildProcess(
       randomUUID(),
       process.execPath,
       [
         "-e",
+        // Child reads stdin, writes it to stdout, then exits immediately.
         "let data='';process.stdin.setEncoding('utf8');process.stdin.on('data',chunk=>data+=chunk);process.stdin.on('end',()=>process.stdout.write(data));",
       ],
       {
@@ -41,17 +50,79 @@ describe("runChildProcess", () => {
         graceSec: 1,
         onLog: async () => {},
         onSpawn: async () => {
-          await new Promise((resolve) => setTimeout(resolve, spawnDelayMs));
-          onSpawnCompletedAt = Date.now();
+          onSpawnPromise = (async () => {
+            await new Promise((resolve) => setTimeout(resolve, spawnDelayMs));
+            onSpawnCompletedAt = Date.now();
+          })();
+          return onSpawnPromise;
         },
       },
     );
-    const finishedAt = Date.now();
+    runProcessResolvedAt = Date.now();
+
+    // Wait for onSpawn to fully complete (it runs in parallel, not awaited by
+    // runChildProcess, so we have to wait ourselves for the assertion).
+    await onSpawnPromise;
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe("hello from stdin");
-    expect(onSpawnCompletedAt).toBeGreaterThanOrEqual(startedAt + spawnDelayMs);
-    expect(finishedAt - startedAt).toBeGreaterThanOrEqual(spawnDelayMs);
+    // onSpawn still fires (pid persist still happens in parallel).
+    expect(onSpawnCompletedAt).toBeGreaterThan(0);
+    // Core invariant: runChildProcess resolved BEFORE onSpawn completed,
+    // proving stdin was delivered without waiting for the DB-persist gate.
+    expect(runProcessResolvedAt).toBeLessThan(onSpawnCompletedAt);
+  });
+
+  it("writes stdin before the DB-persist resolves (exit-before-persist ordering)", async () => {
+    // Regression test for NoobyGains/paperclip#15 secondary fix.
+    // Simulates the race where the child exits before a slow onSpawn
+    // (DB persist) completes.  Stdin must have been written (and the child
+    // read it) before onSpawn even resolves.
+    const persistDelayMs = 300;
+    let stdinReceivedAt = 0;
+    let persistResolvedAt = 0;
+    let onSpawnPromise: Promise<void> = Promise.resolve();
+
+    const result = await runChildProcess(
+      randomUUID(),
+      process.execPath,
+      [
+        "-e",
+        // Immediately echo stdin back on stdout, then exit.
+        "let data='';process.stdin.setEncoding('utf8');process.stdin.on('data',chunk=>data+=chunk);process.stdin.on('end',()=>process.stdout.write(data));",
+      ],
+      {
+        cwd: process.cwd(),
+        env: {},
+        stdin: "ordering-test-payload",
+        timeoutSec: 5,
+        graceSec: 1,
+        onLog: async (stream, text) => {
+          // The first stdout chunk proves stdin arrived at the child.
+          if (stream === "stdout" && text.includes("ordering-test-payload") && stdinReceivedAt === 0) {
+            stdinReceivedAt = Date.now();
+          }
+        },
+        onSpawn: async () => {
+          onSpawnPromise = (async () => {
+            await new Promise((resolve) => setTimeout(resolve, persistDelayMs));
+            persistResolvedAt = Date.now();
+          })();
+          return onSpawnPromise;
+        },
+      },
+    );
+
+    // Wait for the slow persist to complete so we can compare timestamps.
+    await onSpawnPromise;
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("ordering-test-payload");
+
+    // Key assertion: stdin bytes arrived at the child BEFORE the persist resolved.
+    expect(stdinReceivedAt).toBeGreaterThan(0);
+    expect(persistResolvedAt).toBeGreaterThan(0);
+    expect(stdinReceivedAt).toBeLessThan(persistResolvedAt);
   });
 
   it.skipIf(process.platform === "win32")("kills descendant processes on timeout via the process group", async () => {

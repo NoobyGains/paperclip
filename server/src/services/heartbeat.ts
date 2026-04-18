@@ -2845,6 +2845,10 @@ export function heartbeatService(db: Db) {
         payload: {
           ...(run.processPid ? { processPid: run.processPid } : {}),
           ...(run.processGroupId ? { processGroupId: run.processGroupId } : {}),
+          ...(run.exitCode != null ? { exitCode: run.exitCode } : {}),
+          ...(run.signal ? { signal: run.signal } : {}),
+          ...(run.stderrExcerpt ? { stderrExcerpt: run.stderrExcerpt } : {}),
+          ...(run.stdinWriteAt ? { stdinWriteAt: run.stdinWriteAt.toISOString() } : {}),
           ...(descendantOnlyCleanup ? { descendantOnlyCleanup: true } : {}),
           ...(retriedRun ? { retryRunId: retriedRun.id } : {}),
         },
@@ -3902,6 +3906,15 @@ export function heartbeatService(db: Db) {
                 : null,
             startedAt: meta.startedAt,
           });
+        },
+        onStdinWritten: (meta) => {
+          const writeAt = new Date(meta.stdinWriteAt);
+          db.update(heartbeatRuns)
+            .set({ stdinWriteAt: Number.isNaN(writeAt.getTime()) ? new Date() : writeAt, updatedAt: new Date() })
+            .where(eq(heartbeatRuns.id, run.id))
+            .catch((err: unknown) => {
+              logger.warn({ err, runId: run.id }, "failed to persist stdinWriteAt");
+            });
         },
         authToken: authToken ?? undefined,
       });

@@ -1072,6 +1072,7 @@ export async function runChildProcess(
     onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
     onLogError?: (err: unknown, runId: string, message: string) => void;
     onSpawn?: (meta: { pid: number; processGroupId: number | null; startedAt: string }) => Promise<void>;
+    onStdinWritten?: (meta: { stdinWriteAt: string }) => void;
     stdin?: string;
   },
 ): Promise<RunProcessResult> {
@@ -1167,11 +1168,17 @@ export async function runChildProcess(
             );
           });
           if (opts.stdin != null) {
-            void spawnPersistPromise.finally(() => {
-              if (child.killed || stdin.destroyed) return;
+            // Write stdin immediately after spawn so claude.exe (and similar
+            // CLIs) never see EOF before the prompt arrives.  The DB persist
+            // of pid/startedAt is orthogonal — we fire spawnPersistPromise in
+            // parallel and do NOT gate stdin on it.  See NoobyGains/paperclip#15.
+            if (child.killed || stdin.destroyed) {
+              // Already dead between spawn and this tick — nothing to write.
+            } else {
               stdin.write(opts.stdin as string);
               stdin.end();
-            });
+              opts.onStdinWritten?.({ stdinWriteAt: new Date().toISOString() });
+            }
           }
         }
 

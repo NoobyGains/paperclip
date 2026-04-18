@@ -435,6 +435,13 @@
       "when": 1776517904782,
       "tag": "0061_blue_madripoor",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1745020800000,
+      "tag": "0062_process_lost_telemetry",
+      "breakpoints": true
     }
   ]
 }

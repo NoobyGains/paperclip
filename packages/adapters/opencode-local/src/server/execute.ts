@@ -93,7 +93,7 @@ async function ensureOpenCodeSkillsInjected(
 }
 
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
-  const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken } = ctx;
+  const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, onStdinWritten, authToken } = ctx;
 
   const promptTemplate = asString(
     config.promptTemplate,
@@ -330,6 +330,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         timeoutSec,
         graceSec,
         onSpawn,
+        onStdinWritten,
         onLog,
       });
       return {
