@@ -85,6 +85,12 @@ function buildIssueDescription(issue: GithubIssue): string {
   ].join("\n");
 }
 
+const GITHUB_SEGMENT = /^[A-Za-z0-9._-]+$/;
+
+function isValidGitHubSegment(value: string): boolean {
+  return GITHUB_SEGMENT.test(value);
+}
+
 function parseGitHubRemoteUrl(remoteUrl: string | null | undefined): string | null {
   if (!remoteUrl) return null;
   const trimmed = remoteUrl.trim();
@@ -96,7 +102,10 @@ function parseGitHubRemoteUrl(remoteUrl: string | null | undefined): string | nu
     if (hostname !== "github.com" && hostname !== "www.github.com") return null;
     const parts = parsed.pathname.replace(/^\/+/, "").replace(/\.git$/i, "").split("/").filter(Boolean);
     if (parts.length < 2) return null;
-    return `${parts[0]}/${parts[1]}`;
+    const owner = parts[0]!;
+    const repo = parts[1]!;
+    if (!isValidGitHubSegment(owner) || !isValidGitHubSegment(repo)) return null;
+    return `${owner}/${repo}`;
   } catch {
     const scpMatch = trimmed.match(/^(?:[^@]+@)?([^:]+):(.+)$/);
     if (!scpMatch) return null;
@@ -104,7 +113,10 @@ function parseGitHubRemoteUrl(remoteUrl: string | null | undefined): string | nu
     if (hostname !== "github.com" && hostname !== "www.github.com") return null;
     const parts = scpMatch[2]!.replace(/^\/+/, "").replace(/\.git$/i, "").split("/").filter(Boolean);
     if (parts.length < 2) return null;
-    return `${parts[0]}/${parts[1]}`;
+    const owner = parts[0]!;
+    const repo = parts[1]!;
+    if (!isValidGitHubSegment(owner) || !isValidGitHubSegment(repo)) return null;
+    return `${owner}/${repo}`;
   }
 }
 

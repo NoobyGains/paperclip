@@ -2,6 +2,7 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GithubIssue } from "../services/github-issue-bridge.js";
+import { parseGitHubRemoteUrl } from "../services/github-issue-bridge.js";
 
 function buildProject(overrides: Record<string, unknown> = {}) {
   return {
@@ -69,6 +70,20 @@ function buildProject(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+describe("parseGitHubRemoteUrl", () => {
+  it("returns owner/repo for a valid https remote", () => {
+    expect(parseGitHubRemoteUrl("https://github.com/owner/repo.git")).toBe("owner/repo");
+  });
+
+  it("rejects an owner segment starting with --", () => {
+    expect(parseGitHubRemoteUrl("https://github.com/--foo/repo")).toBeNull();
+  });
+
+  it("rejects a repo segment that is ..", () => {
+    expect(parseGitHubRemoteUrl("https://github.com/owner/..")).toBeNull();
+  });
+});
 
 describe("githubIssueBridge", () => {
   beforeEach(() => {
