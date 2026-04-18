@@ -316,7 +316,103 @@ const TOOL_ANNOTATIONS: Record<string, PaperclipToolAnnotations> = {
   paperclipApiRequest: { openWorldHint: true, title: "Raw API request" },
 };
 
-export function createToolDefinitions(client: PaperclipApiClient): ToolDefinition[] {
+// ---------------------------------------------------------------------------
+// Profile-derived description helpers
+// ---------------------------------------------------------------------------
+
+export interface OperatorProfile {
+  subscriptionOnly?: boolean | null;
+  claudeSubscription?: string | null;
+  codexSubscription?: string | null;
+  preferences?: Record<string, unknown> | null;
+}
+
+/**
+ * Build the description for `paperclipHireWithProfile` based on the operator
+ * profile. When no profile is available the static fallback is returned.
+ */
+export function buildHireWithProfileDescription(profile: OperatorProfile | null): string {
+  const base =
+    "Hire a new agent using one of the CEO hiring profiles. Expands the profile into the full adapterType + adapterConfig + capabilities client-side, then POSTs to /api/companies/:id/agent-hires. Use this as your default hire path — it's shorter than paperclipCreateAgentHire and ensures the CEO's profile decisions are applied consistently.";
+
+  if (!profile) return base;
+
+  const lines: string[] = [base];
+
+  if (profile.subscriptionOnly) {
+    lines.push(
+      "You are in subscription-only mode — defaults to Codex Max for coding profiles and Claude Max for reviewer/research profiles.",
+    );
+  } else {
+    const parts: string[] = [];
+    if (profile.codexSubscription) parts.push(`Codex subscription: ${profile.codexSubscription}`);
+    if (profile.claudeSubscription) parts.push(`Claude subscription: ${profile.claudeSubscription}`);
+    if (parts.length) lines.push(parts.join(". ") + ".");
+  }
+
+  lines.push(
+    "Available profile names: coding-heavy, coding-standard, coding-light, reasoning-heavy, reasoning-standard, reviewer, research.",
+  );
+
+  return lines.join(" ");
+}
+
+/**
+ * Build the description for `paperclipBootstrapApp` based on the operator
+ * profile. Returns the static fallback when no profile is available.
+ */
+export function buildBootstrapAppDescription(profile: OperatorProfile | null): string {
+  const base =
+    "One-call app onboarding. Creates a new company, turns on auto-hire (so the CEO can hire specialists without approval), directly hires a CEO agent on the chosen adapter, creates a project pointing at repoPath, and optionally writes a .paperclip/project.yaml inside the repo so future sessions pick up the IDs. Requires a board-level API key.";
+
+  if (!profile) return base;
+
+  const lines: string[] = [base];
+
+  if (profile.subscriptionOnly) {
+    lines.push(
+      "You are in subscription-only mode — the CEO will be created with the subscription-tier adapter matching your plan. Set ceoAdapterType explicitly to override.",
+    );
+  } else {
+    const parts: string[] = [];
+    if (profile.codexSubscription) parts.push(`Codex (${profile.codexSubscription})`);
+    if (profile.claudeSubscription) parts.push(`Claude (${profile.claudeSubscription})`);
+    if (parts.length) lines.push(`Active subscriptions: ${parts.join(", ")}.`);
+  }
+
+  return lines.join(" ");
+}
+
+/**
+ * Build the description for `paperclipCreateAgentHire` based on the operator
+ * profile. Returns the static fallback when no profile is available.
+ */
+export function buildCreateAgentHireDescription(profile: OperatorProfile | null): string {
+  const base =
+    "Submit an agent-hire request (same payload shape as the paperclip-create-agent skill). The server may auto-create a board approval if the company requires it.";
+
+  if (!profile) return base;
+
+  const lines: string[] = [base];
+
+  if (profile.subscriptionOnly) {
+    lines.push(
+      "You are in subscription-only mode — choose adapterType and adapterConfig that match your subscription plan, or use paperclipHireWithProfile which handles this automatically.",
+    );
+  } else {
+    const parts: string[] = [];
+    if (profile.codexSubscription) parts.push(`Codex (${profile.codexSubscription})`);
+    if (profile.claudeSubscription) parts.push(`Claude (${profile.claudeSubscription})`);
+    if (parts.length) lines.push(`Active subscriptions: ${parts.join(", ")}.`);
+  }
+
+  return lines.join(" ");
+}
+
+export function createToolDefinitions(
+  client: PaperclipApiClient,
+  profile: OperatorProfile | null = null,
+): ToolDefinition[] {
   const tools: ToolDefinition[] = [
     makeTool(
       "paperclipMe",
@@ -652,7 +748,7 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
     ),
     makeTool(
       "paperclipCreateAgentHire",
-      "Submit an agent-hire request (same payload shape as the paperclip-create-agent skill). The server may auto-create a board approval if the company requires it.",
+      buildCreateAgentHireDescription(profile),
       createAgentHireToolSchema,
       async ({ companyId, ...body }) =>
         client.requestJson(
@@ -896,7 +992,7 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
     ),
     makeTool(
       "paperclipHireWithProfile",
-      "Hire a new agent using one of the CEO hiring profiles. Expands the profile into the full adapterType + adapterConfig + capabilities client-side, then POSTs to /api/companies/:id/agent-hires. Use this as your default hire path — it's shorter than paperclipCreateAgentHire and ensures the CEO's profile decisions are applied consistently.",
+      buildHireWithProfileDescription(profile),
       z.object({
         name: z.string().min(1).max(120),
         role: z.string().min(1).max(64),
@@ -983,7 +1079,7 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
     ),
     makeTool(
       "paperclipBootstrapApp",
-      "One-call app onboarding. Creates a new company, turns on auto-hire (so the CEO can hire specialists without approval), directly hires a CEO agent on the chosen adapter, creates a project pointing at repoPath, and optionally writes a .paperclip/project.yaml inside the repo so future sessions pick up the IDs. Requires a board-level API key.",
+      buildBootstrapAppDescription(profile),
       bootstrapAppSchema,
       async ({ name, repoPath, ceoAdapterType, writeProjectConfig }) => {
         const trimmedRepoPath = repoPath.trim();
@@ -1225,4 +1321,17 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
     ...tool,
     annotations: TOOL_ANNOTATIONS[tool.name] ?? tool.annotations,
   }));
+}
+
+/**
+ * Async variant used at `listTools` time (i.e. from index.ts).
+ * Fetches the operator profile once (session-cached on the client), then
+ * delegates to `createToolDefinitions`. Falls back to static descriptions if
+ * the profile fetch fails — `getCachedProfile` never rejects.
+ */
+export async function createDynamicToolDefinitions(
+  client: PaperclipApiClient,
+): Promise<ToolDefinition[]> {
+  const profile = await client.getCachedProfile();
+  return createToolDefinitions(client, profile as OperatorProfile | null);
 }
