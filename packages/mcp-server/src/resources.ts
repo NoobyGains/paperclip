@@ -1,5 +1,6 @@
 import { PaperclipApiClient } from "./client.js";
 import { diagnoseCompany } from "./diagnostics.js";
+import { listTeamShapes } from "@paperclipai/shared";
 
 export interface ResourceDefinition {
   name: string;
@@ -152,6 +153,15 @@ export function createResourceDefinitions(
         "End-to-end recipe for onboarding a project (or portfolio of projects) for this operator. Rendered at read time from the operator's profile, the hiring playbook, and the registered adapter list. Read this first when asked to 'set up my projects' or 'onboard my portfolio'.",
       mimeType: "text/markdown",
       read: async () => client.fetchRawText("/llms/setup-recipe.txt"),
+    },
+    {
+      name: "Archetypes",
+      title: "Project archetypes and team shapes",
+      uri: "paperclip://archetypes",
+      description:
+        "Full registry of all recognised project archetypes (pnpm-monorepo, npm-single, python-poetry, rust-cargo, go-modules, dotnet, unknown) and the default team shape pre-hired for each. Each shape lists the role slots with their hiring-profile IDs. Read this before calling paperclipGetTeamShape or when deciding which agents to boot for a new project.",
+      mimeType: "application/json",
+      read: async () => JSON.stringify(listTeamShapes(), null, 2),
     },
   ];
 }

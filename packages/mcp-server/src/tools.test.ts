@@ -704,4 +704,75 @@ describe("paperclip MCP tools", () => {
     const payload = JSON.parse(response.content[0]!.text);
     expect(payload.written).toEqual(["AGENTS.md"]);
   });
+
+  describe("R1 — paperclipGetTeamShape tool", () => {
+    it("returns the pnpm-monorepo shape with cto + two engineers + qa + reviewer", async () => {
+      vi.stubGlobal("fetch", vi.fn());
+
+      const tool = getTool("paperclipGetTeamShape");
+      const response = await tool.execute({ archetype: "pnpm-monorepo" });
+
+      expect(response.isError).toBeFalsy();
+      const payload = JSON.parse(response.content[0]!.text);
+      expect(payload.archetype).toBe("pnpm-monorepo");
+      const roles = payload.shape.roles.map((r: { role: string }) => r.role);
+      expect(roles).toContain("cto");
+      expect(roles).toContain("qa");
+      expect(roles).toContain("reviewer");
+      expect(roles.filter((r: string) => r === "engineer")).toHaveLength(2);
+    });
+
+    it("returns the rust-cargo shape with Senior Engineer + reviewer", async () => {
+      vi.stubGlobal("fetch", vi.fn());
+
+      const tool = getTool("paperclipGetTeamShape");
+      const response = await tool.execute({ archetype: "rust-cargo" });
+
+      const payload = JSON.parse(response.content[0]!.text);
+      expect(payload.archetype).toBe("rust-cargo");
+      expect(payload.shape.roles).toHaveLength(2);
+      const eng = payload.shape.roles.find((r: { role: string }) => r.role === "engineer");
+      expect(eng.name).toBe("Senior Engineer");
+      expect(eng.profile).toBe("coding-heavy");
+    });
+
+    it("defaults to the unknown shape when no archetype is provided", async () => {
+      vi.stubGlobal("fetch", vi.fn());
+
+      const tool = getTool("paperclipGetTeamShape");
+      const response = await tool.execute({});
+
+      const payload = JSON.parse(response.content[0]!.text);
+      expect(payload.archetype).toBe("unknown");
+      expect(payload.shape.roles).toHaveLength(2);
+    });
+
+    it("returns all 7 shapes when includeAll=true", async () => {
+      vi.stubGlobal("fetch", vi.fn());
+
+      const tool = getTool("paperclipGetTeamShape");
+      const response = await tool.execute({ includeAll: true });
+
+      const payload = JSON.parse(response.content[0]!.text) as Array<unknown>;
+      expect(Array.isArray(payload)).toBe(true);
+      expect(payload).toHaveLength(7);
+    });
+
+    it("is annotated read-only and idempotent", () => {
+      const tool = getTool("paperclipGetTeamShape");
+      expect(tool.annotations?.readOnlyHint).toBe(true);
+      expect(tool.annotations?.idempotentHint).toBe(true);
+      expect(tool.annotations?.destructiveHint).toBe(false);
+    });
+
+    it("makes no network calls — shape is resolved from the in-memory registry", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tool = getTool("paperclipGetTeamShape");
+      await tool.execute({ archetype: "go-modules" });
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
 });
