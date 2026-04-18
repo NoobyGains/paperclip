@@ -4103,6 +4103,27 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
       }
     }
 
+    // Determine whether new agents landing via this import would be parked in
+    // pending_approval because the target company (or, for fresh imports, the
+    // manifest) enables requireBoardApprovalForNewAgents. When the target is an
+    // existing company, GitOps-style re-imports would previously silently drop
+    // new agents behind the gate; callers must now either pass
+    // allowNewAgents=true to bypass it or the import fails loudly after adapter
+    // validation has run on the gated agents.
+    const newAgentsRequireApproval =
+      typeof targetCompany.requireBoardApprovalForNewAgents === "boolean"
+        ? targetCompany.requireBoardApprovalForNewAgents
+        : include.company
+          ? (sourceManifest.company?.requireBoardApprovalForNewAgents ?? true)
+          : true;
+    const allowNewAgents = input.allowNewAgents === true;
+    const shouldFailOnGatedNewAgents =
+      include.agents
+      && input.target.mode === "existing_company"
+      && newAgentsRequireApproval
+      && !allowNewAgents;
+    const gatedNewAgentsFailLoud: { slug: string; name: string }[] = [];
+
     if (include.agents) {
       for (const planAgent of plan.preview.plan.agentPlans) {
         const manifestAgent = plan.selectedAgents.find((agent) => agent.slug === planAgent.slug);
@@ -4209,12 +4230,25 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           continue;
         }
 
-        const requiresApproval =
-          typeof targetCompany.requireBoardApprovalForNewAgents === "boolean"
-            ? targetCompany.requireBoardApprovalForNewAgents
-            : include.company
-              ? (sourceManifest.company?.requireBoardApprovalForNewAgents ?? true)
-              : true;
+        // Defer actual creation for gated new agents when we intend to fail
+        // loud after the loop — this way, adapter validation still runs and
+        // its errors take precedence over our gating error.
+        if (shouldFailOnGatedNewAgents && !planAgent.existingAgentId) {
+          gatedNewAgentsFailLoud.push({
+            slug: planAgent.slug,
+            name: manifestAgent.name,
+          });
+          continue;
+        }
+        const bypassApprovalGate = allowNewAgents && newAgentsRequireApproval;
+        const requiresApproval = newAgentsRequireApproval && !allowNewAgents;
+        if (bypassApprovalGate) {
+          warnings.push(
+            `Imported new agent ${manifestAgent.slug} bypassed the target company's `
+            + `requireBoardApprovalForNewAgents gate because allowNewAgents was set; `
+            + `agent was created with status "idle".`,
+          );
+        }
         const createdStatus = requiresApproval ? "pending_approval" : "idle";
         let created = await agents.create(targetCompany.id, {
           ...patch,
@@ -4248,6 +4282,21 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           name: created.name,
           reason: planAgent.reason,
         });
+      }
+
+      if (gatedNewAgentsFailLoud.length > 0) {
+        const pretty = gatedNewAgentsFailLoud
+          .map((entry) => `${entry.name} (${entry.slug})`)
+          .join(", ");
+        throw unprocessable(
+          `Target company requires board approval for new agents, so importing `
+          + `${gatedNewAgentsFailLoud.length} new `
+          + `agent${gatedNewAgentsFailLoud.length === 1 ? "" : "s"} would leave `
+          + `${gatedNewAgentsFailLoud.length === 1 ? "it" : "them"} parked in `
+          + `pending_approval: ${pretty}. `
+          + `Pass allowNewAgents=true to import them as idle, or disable `
+          + `requireBoardApprovalForNewAgents on the target company before retrying.`,
+        );
       }
 
       // Apply reporting links once all imported agent ids are available.

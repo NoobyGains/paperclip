@@ -280,6 +280,14 @@ export interface CompanyPortabilityAdapterOverride {
 
 export interface CompanyPortabilityImportRequest extends CompanyPortabilityPreviewRequest {
   adapterOverrides?: Record<string, CompanyPortabilityAdapterOverride>;
+  /**
+   * When true, new agents are imported with status "idle" even when the target
+   * company has requireBoardApprovalForNewAgents enabled. If false or omitted
+   * and the gate would otherwise produce pending_approval agents on an
+   * existing-company import, the import fails loudly instead of silently
+   * parking the new agents behind the approval gate.
+   */
+  allowNewAgents?: boolean;
 }
 
 export interface CompanyPortabilityImportResult {
