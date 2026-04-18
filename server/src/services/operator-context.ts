@@ -20,13 +20,28 @@ const NARRATIVE_PATH = path.resolve(
   HERE,
   "../onboarding-assets/operator-context/OPERATOR.md",
 );
+const FIRST_RUN_PATH = path.resolve(
+  HERE,
+  "../onboarding-assets/operator-context/FIRST_RUN.md",
+);
 
 let narrativeCache: string | null = null;
+let firstRunCache: string | null = null;
 
 async function loadNarrative(): Promise<string> {
   if (narrativeCache !== null) return narrativeCache;
   narrativeCache = await readFile(NARRATIVE_PATH, "utf8");
   return narrativeCache;
+}
+
+async function loadFirstRun(): Promise<string> {
+  if (firstRunCache !== null) return firstRunCache;
+  firstRunCache = await readFile(FIRST_RUN_PATH, "utf8");
+  return firstRunCache;
+}
+
+export async function buildFirstRunGuide(): Promise<string> {
+  return loadFirstRun();
 }
 
 function bulletList(values: readonly string[]): string {
@@ -93,4 +108,5 @@ export async function buildOperatorContext(): Promise<string> {
 
 export function resetOperatorContextCacheForTests(): void {
   narrativeCache = null;
+  firstRunCache = null;
 }

@@ -19,6 +19,7 @@ export const companies = pgTable(
     codexSandboxLoopbackEnabled: boolean("codex_sandbox_loopback_enabled")
       .notNull()
       .default(true),
+    autoHireEnabled: boolean("auto_hire_enabled").notNull().default(false),
     feedbackDataSharingEnabled: boolean("feedback_data_sharing_enabled")
       .notNull()
       .default(false),

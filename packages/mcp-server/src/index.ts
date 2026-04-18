@@ -31,6 +31,7 @@ export function createPaperclipMcpServer(config: PaperclipMcpConfig = readConfig
       resource.name,
       resource.uri,
       {
+        title: resource.title,
         description: resource.description,
         mimeType: resource.mimeType,
       },

@@ -2425,6 +2425,10 @@ function buildManifestFromPackageFiles(
         typeof paperclipCompany.codexSandboxLoopbackEnabled === "boolean"
           ? paperclipCompany.codexSandboxLoopbackEnabled
           : true,
+      autoHireEnabled:
+        typeof paperclipCompany.autoHireEnabled === "boolean"
+          ? paperclipCompany.autoHireEnabled
+          : false,
       feedbackDataSharingEnabled:
         typeof paperclipCompany.feedbackDataSharingEnabled === "boolean"
           ? paperclipCompany.feedbackDataSharingEnabled
@@ -3460,6 +3464,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           logoPath: companyLogoPath,
           requireBoardApprovalForNewAgents: company.requireBoardApprovalForNewAgents ? undefined : false,
           codexSandboxLoopbackEnabled: company.codexSandboxLoopbackEnabled ? undefined : false,
+          autoHireEnabled: company.autoHireEnabled ? true : undefined,
           feedbackDataSharingEnabled: company.feedbackDataSharingEnabled ? true : undefined,
           feedbackDataSharingConsentAt: company.feedbackDataSharingConsentAt?.toISOString() ?? null,
           feedbackDataSharingConsentByUserId: company.feedbackDataSharingConsentByUserId ?? null,
@@ -3985,6 +3990,9 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         codexSandboxLoopbackEnabled: include.company
           ? (sourceManifest.company?.codexSandboxLoopbackEnabled ?? true)
           : true,
+        autoHireEnabled: include.company
+          ? (sourceManifest.company?.autoHireEnabled ?? false)
+          : false,
         feedbackDataSharingEnabled: include.company
           ? (sourceManifest.company?.feedbackDataSharingEnabled ?? false)
           : false,
@@ -4015,6 +4023,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           brandColor: sourceManifest.company.brandColor,
           requireBoardApprovalForNewAgents: sourceManifest.company.requireBoardApprovalForNewAgents,
           codexSandboxLoopbackEnabled: sourceManifest.company.codexSandboxLoopbackEnabled,
+          autoHireEnabled: sourceManifest.company.autoHireEnabled,
           feedbackDataSharingEnabled: sourceManifest.company.feedbackDataSharingEnabled,
           feedbackDataSharingConsentAt: sourceManifest.company.feedbackDataSharingConsentAt
             ? new Date(sourceManifest.company.feedbackDataSharingConsentAt)

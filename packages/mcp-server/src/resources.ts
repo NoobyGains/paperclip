@@ -4,6 +4,7 @@ import { diagnoseCompany } from "./diagnostics.js";
 export interface ResourceDefinition {
   name: string;
   uri: string;
+  title: string;
   description: string;
   mimeType: string;
   read: () => Promise<string>;
@@ -30,14 +31,16 @@ export function createResourceDefinitions(
   return [
     {
       name: "Company summary",
+      title: "Company summary",
       uri: "paperclip://company/summary",
       description:
-        "Company record including settings, status, pause reason, budget totals, and the board toggles (requireBoardApprovalForNewAgents, codexSandboxLoopbackEnabled, etc.).",
+        "Company record including settings, status, pause reason, budget totals, and the board toggles (requireBoardApprovalForNewAgents, codexSandboxLoopbackEnabled, autoHireEnabled, etc.).",
       mimeType: "application/json",
       read: async () => readJson(client, `/companies/${client.resolveCompanyId()}`),
     },
     {
       name: "Agents",
+      title: "Agents",
       uri: "paperclip://agents",
       description:
         "All agents in the current company with status, pauseReason, adapterType, reportsTo, and lastHeartbeatAt.",
@@ -46,6 +49,7 @@ export function createResourceDefinitions(
     },
     {
       name: "Open issues",
+      title: "Open issues",
       uri: "paperclip://issues/open",
       description: "All issues in a non-terminal status (in_progress).",
       mimeType: "application/json",
@@ -53,6 +57,7 @@ export function createResourceDefinitions(
     },
     {
       name: "Blocked issues",
+      title: "Blocked issues",
       uri: "paperclip://issues/blocked",
       description: "Issues in the blocked status with their blockedByIssueIds chain.",
       mimeType: "application/json",
@@ -60,6 +65,7 @@ export function createResourceDefinitions(
     },
     {
       name: "Recent heartbeat runs",
+      title: "Recent runs",
       uri: "paperclip://runs/recent",
       description: "Last 50 heartbeat runs across all agents in the current company.",
       mimeType: "application/json",
@@ -67,6 +73,7 @@ export function createResourceDefinitions(
     },
     {
       name: "Pending approvals",
+      title: "Pending approvals",
       uri: "paperclip://approvals/pending",
       description: "All approvals still in a pending state.",
       mimeType: "application/json",
@@ -74,6 +81,7 @@ export function createResourceDefinitions(
     },
     {
       name: "Stuck diagnostics",
+      title: "Stuck diagnostics",
       uri: "paperclip://stuck",
       description:
         "One-shot health check: paused/over-budget agents, issues with stale execution locks, overdue approvals, and overdue routines. Read this first when the board says 'anything stuck?'",
@@ -82,6 +90,7 @@ export function createResourceDefinitions(
     },
     {
       name: "Routine schedule",
+      title: "Routines",
       uri: "paperclip://routines/schedule",
       description: "All routines with their nextRunAt and lastTriggeredAt fields.",
       mimeType: "application/json",
@@ -89,11 +98,21 @@ export function createResourceDefinitions(
     },
     {
       name: "Operator guide",
+      title: "Operator guide",
       uri: "paperclip://docs/operator-guide",
       description:
         "The Paperclip Operator Context Pack — feature reference, key diagnostic fields, and recommended workflow. Read once when connecting.",
       mimeType: "text/markdown",
       read: async () => client.fetchRawText("/llms/operator-context.txt"),
+    },
+    {
+      name: "First-run guide",
+      title: "First-run walkthrough",
+      uri: "paperclip://docs/first-run",
+      description:
+        "Step-by-step onboarding walkthrough for a new paperclip user. Read this when the user asks 'how do I set this up' or 'how do I use paperclip for my app'.",
+      mimeType: "text/markdown",
+      read: async () => client.fetchRawText("/llms/first-run.txt"),
     },
   ];
 }

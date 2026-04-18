@@ -291,6 +291,61 @@ describe("paperclip MCP tools", () => {
     expect(tool.annotations?.openWorldHint).toBe(true);
   });
 
+  it("paperclipBootstrapApp chains create-company → patch settings → create CEO → create project", async () => {
+    const calls: Array<{ method: string; url: string; body: unknown }> = [];
+    const fetchMock = vi.fn().mockImplementation(async (url: URL | string, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      calls.push({ method, url: u, body });
+
+      if (method === "POST" && u.endsWith("/api/companies")) {
+        return mockJsonResponse({ id: "c-1", name: "My App workspace" });
+      }
+      if (method === "PATCH" && u.includes("/api/companies/c-1")) {
+        return mockJsonResponse({
+          id: "c-1",
+          name: "My App workspace",
+          autoHireEnabled: true,
+          requireBoardApprovalForNewAgents: false,
+        });
+      }
+      if (method === "POST" && u.includes("/api/companies/c-1/agents")) {
+        return mockJsonResponse({ id: "ceo-1", name: "CEO", adapterType: "claude_local" });
+      }
+      if (method === "POST" && u.includes("/api/companies/c-1/projects")) {
+        return mockJsonResponse({ id: "proj-1", name: "My App", workspace: {} });
+      }
+      throw new Error(`Unmocked ${method} ${u}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipBootstrapApp");
+    const response = await tool.execute({
+      name: "My App",
+      repoPath: "/tmp/nonexistent-for-test",
+      writeProjectConfig: false,
+    });
+
+    const payload = JSON.parse(response.content[0]!.text);
+    expect(payload.status).toBe("created");
+    expect(payload.company.autoHireEnabled).toBe(true);
+    expect(payload.company.requireBoardApprovalForNewAgents).toBe(false);
+    expect(payload.ceo.id).toBe("ceo-1");
+    expect(payload.project.id).toBe("proj-1");
+
+    // Ordering: company → patch → agent → project
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toContain("/api/companies");
+    expect(calls[1]?.method).toBe("PATCH");
+    expect(calls[1]?.body).toMatchObject({
+      autoHireEnabled: true,
+      requireBoardApprovalForNewAgents: false,
+    });
+    expect(calls[2]?.url).toContain("/api/companies/c-1/agents");
+    expect(calls[3]?.url).toContain("/api/companies/c-1/projects");
+  });
+
   it("paperclipDiagnoseIssue does not flag stale lock when run is active", async () => {
     const fetchMock = vi.fn().mockImplementation((url: URL | string) => {
       const path = String(url);

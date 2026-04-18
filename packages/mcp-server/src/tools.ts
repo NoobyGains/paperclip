@@ -1,3 +1,5 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { z } from "zod";
 import {
   addIssueCommentSchema,
@@ -210,6 +212,13 @@ const diagnoseCompanySchema = z.object({
   approvalAgeWarnHours: z.number().int().min(1).max(720).optional().default(24),
 });
 
+const bootstrapAppSchema = z.object({
+  name: z.string().min(1).max(120),
+  repoPath: z.string().min(1).max(1024),
+  ceoAdapterType: z.string().min(1).max(64).optional().default("claude_local"),
+  writeProjectConfig: z.boolean().optional().default(true),
+});
+
 
 /**
  * Annotations are attached centrally at the end of createToolDefinitions
@@ -248,6 +257,15 @@ const TOOL_ANNOTATIONS: Record<string, PaperclipToolAnnotations> = {
   paperclipDiagnoseAgent: { ...READ_ONLY, title: "Diagnose agent" },
   paperclipDiagnoseCompany: { ...READ_ONLY, title: "Diagnose company" },
   paperclipSetup: { ...READ_ONLY, title: "MCP setup validator" },
+  paperclipBootstrapApp: {
+    ...SAFE_WRITE,
+    title: "Bootstrap a paperclip app",
+    // Creates a new company — that's additive, not destructive. But it
+    // also writes to the local filesystem when writeProjectConfig=true,
+    // so we hint destructiveHint=false since the write is scoped to the
+    // repo the user pointed at. The openWorldHint stays false because
+    // paperclip itself is the same-trust-zone data plane.
+  },
 
   // Safe writes (create new data, do not overwrite existing)
   paperclipCreateIssue: { ...SAFE_WRITE, title: "Create issue" },
@@ -845,6 +863,138 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
       diagnoseCompanySchema,
       async ({ companyId, approvalAgeWarnHours }) =>
         diagnoseCompany(client, { companyId, approvalAgeWarnHours }),
+    ),
+    makeTool(
+      "paperclipBootstrapApp",
+      "One-call app onboarding. Creates a new company, turns on auto-hire (so the CEO can hire specialists without approval), directly hires a CEO agent on the chosen adapter, creates a project pointing at repoPath, and optionally writes a .paperclip/project.yaml inside the repo so future sessions pick up the IDs. Requires a board-level API key.",
+      bootstrapAppSchema,
+      async ({ name, repoPath, ceoAdapterType, writeProjectConfig }) => {
+        const trimmedRepoPath = repoPath.trim();
+        const absoluteRepoPath = path.isAbsolute(trimmedRepoPath)
+          ? trimmedRepoPath
+          : path.resolve(process.cwd(), trimmedRepoPath);
+
+        // 1. Create the company.
+        const company = await client.requestJson<Record<string, unknown>>(
+          "POST",
+          "/companies",
+          { body: { name: `${name} workspace` } },
+        );
+        const companyId = String(company.id);
+
+        // 2. Turn on auto-hire and disable the board-approval gate so the
+        //    CEO can spawn specialists without manual approval.
+        const updatedCompany = await client.requestJson<Record<string, unknown>>(
+          "PATCH",
+          `/companies/${companyId}`,
+          {
+            body: {
+              requireBoardApprovalForNewAgents: false,
+              autoHireEnabled: true,
+            },
+          },
+        );
+
+        // 3. Create the CEO agent directly (bypasses the approval flow via
+        //    the board-only direct-create endpoint).
+        const ceo = await client.requestJson<Record<string, unknown>>(
+          "POST",
+          `/companies/${companyId}/agents`,
+          {
+            body: {
+              name: "CEO",
+              role: "ceo",
+              title: "Chief Executive Officer",
+              icon: "crown",
+              adapterType: ceoAdapterType,
+              adapterConfig: { cwd: absoluteRepoPath },
+              runtimeConfig: {
+                heartbeat: { enabled: false, wakeOnDemand: true },
+              },
+              permissions: { canCreateAgents: true },
+              capabilities:
+                "Owns strategy, prioritization, delegation, and hiring for this company.",
+            },
+          },
+        );
+
+        // 4. Create the project pointing at the repo so issues can land.
+        const project = await client.requestJson<Record<string, unknown>>(
+          "POST",
+          `/companies/${companyId}/projects`,
+          {
+            body: {
+              name,
+              description: `Autoboostrapped project for ${name}`,
+              workspace: {
+                cwd: absoluteRepoPath,
+                sourceType: "local_path",
+                isPrimary: true,
+              },
+            },
+          },
+        );
+
+        // 5. Optionally persist a .paperclip/project.yaml so future MCP
+        //    sessions started inside the repo pick the IDs up automatically.
+        let configFilePath: string | null = null;
+        let configWriteError: string | null = null;
+        if (writeProjectConfig) {
+          const dotDir = path.join(absoluteRepoPath, ".paperclip");
+          configFilePath = path.join(dotDir, "project.yaml");
+          try {
+            await fs.mkdir(dotDir, { recursive: true });
+            const yaml = [
+              "# Paperclip project pointer — auto-generated by paperclipBootstrapApp",
+              `# on ${new Date().toISOString()}`,
+              `companyId: ${companyId}`,
+              `projectId: ${String(project.id)}`,
+              `ceoAgentId: ${String(ceo.id)}`,
+              `paperclipApiUrl: ${(client as unknown as { config: { apiUrl: string } }).config.apiUrl.replace(/\/api$/, "")}`,
+              "",
+            ].join("\n");
+            await fs.writeFile(configFilePath, yaml, "utf8");
+          } catch (error) {
+            configWriteError =
+              error instanceof Error ? error.message : String(error);
+          }
+        }
+
+        return {
+          status: configWriteError ? "created_with_warnings" : "created",
+          company: {
+            id: companyId,
+            name: updatedCompany.name,
+            autoHireEnabled: updatedCompany.autoHireEnabled,
+            requireBoardApprovalForNewAgents:
+              updatedCompany.requireBoardApprovalForNewAgents,
+          },
+          ceo: {
+            id: ceo.id,
+            name: ceo.name,
+            adapterType: ceo.adapterType,
+          },
+          project: {
+            id: project.id,
+            name: project.name,
+            workspace: project.workspace ?? null,
+          },
+          projectConfig: configFilePath
+            ? {
+                path: configFilePath,
+                written: !configWriteError,
+                error: configWriteError,
+              }
+            : null,
+          nextSteps: [
+            configFilePath && !configWriteError
+              ? `The repo now contains ${configFilePath}. Future Claude Code sessions opened inside the repo can read it to pick up IDs without env vars.`
+              : "Consider writing your own .paperclip/project.yaml to the repo if you want future sessions to bootstrap without explicit IDs.",
+            "Create your first issue with paperclipCreateIssue. The CEO will triage and auto-hire specialists as needed.",
+            "Check progress at any time with paperclipDiagnoseCompany.",
+          ],
+        };
+      },
     ),
     makeTool(
       "paperclipSetup",

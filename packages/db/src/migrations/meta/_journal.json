@@ -414,6 +414,13 @@
       "when": 1776470400000,
       "tag": "0058_codex_sandbox_loopback",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1776556800000,
+      "tag": "0059_auto_hire_enabled",
+      "breakpoints": true
     }
   ]
 }

@@ -39,6 +39,7 @@ export const portabilityCompanyManifestEntrySchema = z.object({
   logoPath: z.string().nullable(),
   requireBoardApprovalForNewAgents: z.boolean(),
   codexSandboxLoopbackEnabled: z.boolean().default(true),
+  autoHireEnabled: z.boolean().default(false),
   feedbackDataSharingEnabled: z.boolean().default(false),
   feedbackDataSharingConsentAt: z.string().datetime().nullable().default(null),
   feedbackDataSharingConsentByUserId: z.string().nullable().default(null),

@@ -142,6 +142,26 @@ stuck modes. Read `paperclip://stuck` first when the board asks
 "anything stuck?" — it returns paused agents, stale-lock issues, overdue
 approvals, and overdue routines in one blob.
 
+## Bootstrapping a new app
+
+If the user has a repo and wants to drop it into paperclip, call
+`paperclipBootstrapApp` from an MCP session with a board-level API key:
+
+```json
+{
+  "name": "Todo App",
+  "repoPath": "/abs/path/to/repo"
+}
+```
+
+One call: creates a company, flips `autoHireEnabled` on, hires a CEO on
+the configured adapter (`claude_local` by default), creates a project
+pointed at the repo, and writes `.paperclip/project.yaml` into the repo
+so future sessions can auto-resolve IDs.
+
+The narrative walkthrough is also served as `paperclip://docs/first-run`
+(markdown) for the operator-LLM to read.
+
 ## Recovering a stuck issue
 
 When an external operator asks "why is this issue stuck?", call
