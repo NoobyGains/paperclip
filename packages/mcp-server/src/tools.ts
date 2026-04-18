@@ -335,6 +335,13 @@ const TOOL_ANNOTATIONS: Record<string, PaperclipToolAnnotations> = {
 
   // PL1 — plugin catalog
   paperclipListPlugins: { ...READ_ONLY, title: "List plugins" },
+
+  // O2 — portfolio onboard
+  paperclipOnboardPortfolio: {
+    ...SAFE_WRITE,
+    idempotentHint: true,
+    title: "Onboard a portfolio of projects",
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -1381,6 +1388,37 @@ export function createToolDefinitions(
           body: parseOptionalJson(jsonBody),
         });
       },
+    ),
+    makeTool(
+      "paperclipOnboardPortfolio",
+      "Idempotently onboard a portfolio of repos in one call. For each repo: detect its archetype, look up the matching team shape, create a company, hire a CEO + reviewer + pre-shaped team, write per-project CEO overlay files, and write .paperclip/project.yaml. Already-onboarded repos are reported under `skipped`. P1 subscription-only violations are reported under `refusedHires` per project — the rest of the onboarding continues. Returns a per-project report plus an aggregate summary. Requires a board-level API key.",
+      z.object({
+        projects: z
+          .array(
+            z.object({
+              repoPath: z.string().min(1).max(1024).describe("Absolute path to the local git repo."),
+              name: z.string().min(1).max(120).optional().describe("Human-readable project name. Defaults to the directory name."),
+              overrides: z
+                .object({
+                  name: z.string().min(1).max(120).optional(),
+                  ceoAdapterType: z.string().min(1).max(64).optional().describe("Adapter type to use for the CEO agent. Defaults to claude_local."),
+                  defaultHireAdapter: z.string().min(1).max(64).optional().describe("Default adapter for all subsequent agent hires. Defaults to codex_local."),
+                })
+                .optional(),
+            }),
+          )
+          .min(1)
+          .max(50),
+        operatorProfile: z
+          .object({
+            subscriptionOnly: z.boolean().optional().describe("When true, only subscription-billed adapters are permitted."),
+            claudeSubscription: z.string().nullable().optional(),
+            codexSubscription: z.string().nullable().optional(),
+          })
+          .optional()
+          .describe("Operator billing constraints. Inferred from the server if omitted."),
+      }),
+      async (input) => client.onboardPortfolio(input),
     ),
     makeTool(
       "paperclipDiscoverProjects",
