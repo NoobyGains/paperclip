@@ -246,6 +246,82 @@ describe("githubIssueBridge", () => {
     );
   });
 
+  it.each(["paused", "error", "pending_approval"] as const)(
+    "excludes an agent with status '%s' from the fallback pool and agentIdOverride",
+    async (nonInvokableStatus) => {
+      const project = buildProject({
+        primaryWorkspace: {
+          ...(buildProject().primaryWorkspace as Record<string, unknown>),
+          runtimeConfig: {
+            workspaceRuntime: null,
+            desiredState: null,
+            serviceStates: null,
+            githubBridge: {
+              enabled: true,
+              agentIdOverride: "agent-non-invokable",
+            },
+          },
+        },
+      });
+
+      const projectService = {
+        getById: vi.fn(async () => project),
+      };
+      const issueService = {
+        create: vi.fn(async (_companyId: string, input: Record<string, unknown>) => ({
+          id: "issue-1",
+          companyId: "company-1",
+          ...input,
+        })),
+      };
+      const db = {
+        select: vi.fn(() => ({
+          from: vi.fn(() => ({
+            where: vi.fn(async () => []),
+          })),
+        })),
+      };
+      // Only the non-invokable agent and a terminated CEO are in the list —
+      // the override should be rejected and the fallback CEO should also be
+      // excluded, resulting in a null assignee.
+      const agentService = {
+        list: vi.fn(async () => ([
+          { id: "agent-non-invokable", role: "engineer", status: nonInvokableStatus },
+          { id: "ceo-terminated", role: "ceo", status: "terminated" },
+        ])),
+      };
+      const ghIssues: GithubIssue[] = [
+        {
+          number: 99,
+          title: "Test issue",
+          body: null,
+          labels: [],
+          url: "https://github.com/NoobyGains/paperclip/issues/99",
+        },
+      ];
+
+      const { githubIssueBridge } = await import("../services/github-issue-bridge.js");
+      const bridge = githubIssueBridge(db as never, {
+        projectService: projectService as never,
+        issueService: issueService as never,
+        agentService: agentService as never,
+        detectGitHubRepo: vi.fn(async () => "NoobyGains/paperclip"),
+        execGh: vi.fn(async () => ghIssues) as never,
+      });
+
+      const result = await bridge.syncProject("project-1");
+      expect(result.imported).toBe(1);
+      // The non-invokable override was rejected — warning should mention it
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]).toContain("agent-non-invokable");
+      // Assignee resolves to null because the CEO is also non-invokable
+      expect(issueService.create).toHaveBeenCalledWith(
+        "company-1",
+        expect.objectContaining({ assigneeAgentId: null }),
+      );
+    },
+  );
+
   it("returns a warning and no imports when the workspace has no GitHub remote", async () => {
     const projectService = {
       getById: vi.fn(async () => buildProject()),

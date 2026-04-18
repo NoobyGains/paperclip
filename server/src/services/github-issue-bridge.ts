@@ -170,8 +170,9 @@ async function resolveAssigneeAgentId(input: {
   githubBridgeConfig: GithubBridgeConfig | null;
   warnings: string[];
 }): Promise<string | null> {
+  const INVOKABLE_STATUSES = new Set(["active", "idle", "running"]);
   const agents = await input.agentSvc.list(input.companyId);
-  const activeAgents = agents.filter((agent) => agent.status !== "terminated");
+  const activeAgents = agents.filter((agent) => INVOKABLE_STATUSES.has(agent.status));
   const activeById = new Map(activeAgents.map((agent) => [agent.id, agent]));
   const overrideAgentId = input.githubBridgeConfig?.agentIdOverride ?? null;
   if (overrideAgentId) {
