@@ -3304,4 +3304,70 @@ describe("company portability", () => {
     const writtenAdapterConfig = updateCall?.[1]?.adapterConfig as Record<string, unknown>;
     expect(writtenAdapterConfig?.instructionsFilePath).toBe(preImportInstructionsFilePath);
   });
+
+  // Issue #30 regression — when the allowNewAgents gate rejects, NO mutations
+  // should have fired on the target company. Gate is now checked before the
+  // first mutation (company update / logo / skills / existing-agent update)
+  // rather than deep inside the agent loop.
+  it("leaves target company completely unchanged when allowNewAgents gate rejects (issue #30)", async () => {
+    const portability = companyPortabilityService({} as any);
+    const exported = await portability.exportBundle("company-1", {
+      include: { company: true, agents: true, projects: false, issues: false },
+    });
+
+    // Target company: board approval required, has claudecoder already (update), has no CMO (create — triggers gate).
+    companySvc.getById.mockResolvedValue({
+      id: "company-1",
+      name: "Old Name",
+      description: "Old description",
+      brandColor: "#000000",
+      requireBoardApprovalForNewAgents: true,
+      autoHireEnabled: false,
+      defaultHireAdapter: null,
+      defaultReviewerAgentId: null,
+      autoReviewEnabled: false,
+      codexSandboxLoopbackEnabled: false,
+      feedbackDataSharingEnabled: false,
+      feedbackDataSharingConsentAt: null,
+      feedbackDataSharingConsentByUserId: null,
+      feedbackDataSharingTermsVersion: null,
+    });
+    agentSvc.list.mockResolvedValue([
+      {
+        id: "agent-1",
+        name: "ClaudeCoder",
+        status: "idle",
+        role: "engineer",
+        title: "Software Engineer",
+        icon: "code",
+        reportsTo: null,
+        capabilities: "Writes code",
+        adapterType: "claude_local",
+        adapterConfig: { promptTemplate: "You are ClaudeCoder." },
+        runtimeConfig: { heartbeat: { intervalSec: 3600 } },
+        budgetMonthlyCents: 0,
+        permissions: { canCreateAgents: false },
+        metadata: null,
+      },
+    ]);
+
+    await expect(
+      portability.importBundle(
+        {
+          source: { type: "inline", rootPath: exported.rootPath, files: exported.files },
+          include: { company: true, agents: true, projects: false, issues: false },
+          target: { mode: "existing_company", companyId: "company-1" },
+          // allowNewAgents NOT set — this is what triggers the gate
+          collisionStrategy: "replace",
+        },
+        "user-1",
+      ),
+    ).rejects.toThrow(/allowNewAgents/i);
+
+    // Critical: NO mutations should have landed on the target company.
+    expect(companySvc.update).not.toHaveBeenCalled();
+    expect(companySkillSvc.importPackageFiles).not.toHaveBeenCalled();
+    expect(agentSvc.update).not.toHaveBeenCalled();
+    expect(agentSvc.create).not.toHaveBeenCalled();
+  });
 });
