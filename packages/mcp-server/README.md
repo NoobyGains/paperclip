@@ -53,6 +53,11 @@ Read tools:
 - `paperclipGetApproval`
 - `paperclipGetApprovalIssues`
 - `paperclipListApprovalComments`
+- `paperclipListAgentHires`
+- `paperclipGetCompanySettings`
+- `paperclipListRoutines`
+- `paperclipGetRoutine`
+- `paperclipListCompanySkills`
 
 Write tools:
 
@@ -68,6 +73,17 @@ Write tools:
 - `paperclipUnlinkIssueApproval`
 - `paperclipApprovalDecision`
 - `paperclipAddApprovalComment`
+- `paperclipCreateAgentHire`
+- `paperclipUpdateCompanySettings`
+- `paperclipReleaseStaleExecutionLock`
+- `paperclipForceReleaseExecutionLock`
+- `paperclipPreviewCompanyImport`
+
+Diagnostic tools (composite reads — answer "why is X stuck?" in one call):
+
+- `paperclipDiagnoseIssue` — issue + current run + blockers + recent comments + `suggestedAction`
+- `paperclipDiagnoseAgent` — agent + recent runs + locked issues + open hire approval
+- `paperclipDiagnoseCompany` — paused agents, stale-lock issues, overdue approvals, overdue routines
 
 Escape hatch:
 
@@ -75,3 +91,18 @@ Escape hatch:
 
 `paperclipApiRequest` is limited to paths under `/api` and JSON bodies. It is
 meant for endpoints that do not yet have a dedicated MCP tool.
+
+## Recovering a stuck issue
+
+When an external operator asks "why is this issue stuck?", call
+`paperclipDiagnoseIssue` first. The response includes a `staleLock` flag and a
+`suggestedAction` string that points at the correct recovery tool. For the
+common case (the run has crashed), the flow is:
+
+1. `paperclipDiagnoseIssue({ issueId })` → returns `staleLock: true`.
+2. `paperclipReleaseStaleExecutionLock({ issueId })` → safely releases the lock
+   only if the run is terminal or missing; does nothing if still active.
+3. Reassign or checkout the issue as needed.
+
+For the rare case where the run is wedged but not terminal, `paperclipForceReleaseExecutionLock`
+is available to board users only and records a reason in the activity log.

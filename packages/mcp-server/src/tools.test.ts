@@ -156,4 +156,135 @@ describe("paperclip MCP tools", () => {
 
     expect(response.content[0]?.text).toContain("must not contain '..'");
   });
+
+  it("release-stale execution lock hits the documented path", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockJsonResponse({ released: true, reason: "run_terminal" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipReleaseStaleExecutionLock");
+    await tool.execute({ issueId: "PAP-77" });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe(
+      "http://localhost:3100/api/issues/PAP-77/execution-lock/release-stale",
+    );
+    expect(init.method).toBe("POST");
+  });
+
+  it("force-release execution lock forwards the reason", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockJsonResponse({ released: true, runWasActive: true }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipForceReleaseExecutionLock");
+    await tool.execute({ issueId: "PAP-9", reason: "agent crashed, run stuck" });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe(
+      "http://localhost:3100/api/issues/PAP-9/execution-lock/force-release",
+    );
+    expect(JSON.parse(String(init.body))).toEqual({ reason: "agent crashed, run stuck" });
+  });
+
+  it("agent-hire tool posts to companies/:id/agent-hires with the hire body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockJsonResponse({ agent: { id: "agent-9" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipCreateAgentHire");
+    await tool.execute({
+      name: "CTO",
+      role: "cto",
+      adapterType: "codex_local",
+      adapterConfig: { cwd: "/repo", model: "o4-mini" },
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe(
+      "http://localhost:3100/api/companies/11111111-1111-1111-1111-111111111111/agent-hires",
+    );
+    expect(init.method).toBe("POST");
+    const body = JSON.parse(String(init.body));
+    expect(body.name).toBe("CTO");
+    expect(body.adapterType).toBe("codex_local");
+  });
+
+  it("paperclipDiagnoseIssue flags stale lock when run is terminal and suggests recovery", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: URL | string) => {
+      const path = String(url);
+      if (path.endsWith("/api/issues/PAP-42")) {
+        return Promise.resolve(
+          mockJsonResponse({
+            id: "issue-42",
+            identifier: "PAP-42",
+            status: "in_progress",
+            executionRunId: "run-dead",
+            executionLockedAt: "2026-04-18T09:00:00Z",
+            blockedByIssueIds: [],
+          }),
+        );
+      }
+      if (path.includes("/comments")) {
+        return Promise.resolve(mockJsonResponse([]));
+      }
+      if (path.includes("/heartbeat-runs/run-dead")) {
+        return Promise.resolve(
+          mockJsonResponse({
+            id: "run-dead",
+            status: "failed",
+            error: "process crashed",
+          }),
+        );
+      }
+      return Promise.resolve(mockJsonResponse({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipDiagnoseIssue");
+    const response = await tool.execute({ issueId: "PAP-42" });
+
+    const payload = JSON.parse(response.content[0]!.text);
+    expect(payload.staleLock).toBe(true);
+    expect(payload.currentRun.status).toBe("failed");
+    expect(payload.suggestedAction).toContain("paperclipReleaseStaleExecutionLock");
+  });
+
+  it("paperclipDiagnoseIssue does not flag stale lock when run is active", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: URL | string) => {
+      const path = String(url);
+      if (path.endsWith("/api/issues/PAP-43")) {
+        return Promise.resolve(
+          mockJsonResponse({
+            id: "issue-43",
+            identifier: "PAP-43",
+            status: "in_progress",
+            executionRunId: "run-alive",
+            executionLockedAt: "2026-04-18T09:20:00Z",
+            blockedByIssueIds: [],
+          }),
+        );
+      }
+      if (path.includes("/comments")) {
+        return Promise.resolve(mockJsonResponse([]));
+      }
+      if (path.includes("/heartbeat-runs/run-alive")) {
+        return Promise.resolve(
+          mockJsonResponse({ id: "run-alive", status: "running" }),
+        );
+      }
+      return Promise.resolve(mockJsonResponse({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipDiagnoseIssue");
+    const response = await tool.execute({ issueId: "PAP-43" });
+
+    const payload = JSON.parse(response.content[0]!.text);
+    expect(payload.staleLock).toBe(false);
+    expect(payload.suggestedAction).toBeNull();
+  });
 });

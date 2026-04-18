@@ -2,11 +2,14 @@ import { z } from "zod";
 import {
   addIssueCommentSchema,
   checkoutIssueSchema,
+  createAgentHireSchema,
   createApprovalSchema,
   createIssueSchema,
+  updateCompanySchema,
   updateIssueSchema,
   upsertIssueDocumentSchema,
   linkIssueApprovalSchema,
+  companyPortabilityImportSchema,
 } from "@paperclipai/shared";
 import { PaperclipApiClient } from "./client.js";
 import { formatErrorResponse, formatTextResponse } from "./format.js";
@@ -123,6 +126,58 @@ const apiRequestSchema = z.object({
   path: z.string().min(1),
   jsonBody: z.string().optional(),
 });
+
+const createAgentHireToolSchema = z.object({
+  companyId: companyIdOptional,
+}).merge(createAgentHireSchema);
+
+const updateCompanySettingsToolSchema = z.object({
+  companyId: companyIdOptional,
+}).merge(updateCompanySchema);
+
+const previewCompanyImportToolSchema = z.object({
+  companyId: companyIdOptional,
+}).merge(companyPortabilityImportSchema);
+
+const forceReleaseExecutionLockSchema = z.object({
+  issueId: issueIdSchema,
+  reason: z.string().trim().min(1).max(1000),
+});
+
+const diagnoseIssueSchema = z.object({
+  issueId: issueIdSchema,
+});
+
+const diagnoseAgentSchema = z.object({
+  agentId: z.string().min(1),
+  recentRunLimit: z.number().int().min(1).max(50).optional().default(10),
+});
+
+const diagnoseCompanySchema = z.object({
+  companyId: companyIdOptional,
+  approvalAgeWarnHours: z.number().int().min(1).max(720).optional().default(24),
+});
+
+const TERMINAL_RUN_STATUSES = new Set<string>([
+  "succeeded",
+  "failed",
+  "cancelled",
+  "timed_out",
+]);
+
+function ageMs(timestamp: string | null | undefined, nowMs: number): number | null {
+  if (!timestamp) return null;
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? nowMs - parsed : null;
+}
+
+async function safeGet<T>(client: PaperclipApiClient, path: string): Promise<T | null> {
+  try {
+    return await client.requestJson<T>("GET", path);
+  } catch {
+    return null;
+  }
+}
 
 export function createToolDefinitions(client: PaperclipApiClient): ToolDefinition[] {
   return [
@@ -409,6 +464,385 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
         client.requestJson("POST", `/approvals/${encodeURIComponent(approvalId)}/comments`, {
           body: { body },
         }),
+    ),
+    makeTool(
+      "paperclipReleaseStaleExecutionLock",
+      "Release the execution lock on an issue when its referenced run is terminal or missing. Safe recovery path — does nothing if the lock is still active.",
+      z.object({ issueId: issueIdSchema }),
+      async ({ issueId }) =>
+        client.requestJson(
+          "POST",
+          `/issues/${encodeURIComponent(issueId)}/execution-lock/release-stale`,
+          { body: {} },
+        ),
+    ),
+    makeTool(
+      "paperclipForceReleaseExecutionLock",
+      "Board-only admin force-release of an issue's execution lock, including when the backing run is still active. Requires a reason, which is recorded in the activity log.",
+      forceReleaseExecutionLockSchema,
+      async ({ issueId, reason }) =>
+        client.requestJson(
+          "POST",
+          `/issues/${encodeURIComponent(issueId)}/execution-lock/force-release`,
+          { body: { reason } },
+        ),
+    ),
+    makeTool(
+      "paperclipListAgentHires",
+      "List pending or resolved agent-hire approvals for a company.",
+      z.object({ companyId: companyIdOptional, status: z.string().optional() }),
+      async ({ companyId, status }) => {
+        const params = new URLSearchParams();
+        params.set("type", "hire_agent");
+        if (status) params.set("status", status);
+        return client.requestJson(
+          "GET",
+          `/companies/${client.resolveCompanyId(companyId)}/approvals?${params.toString()}`,
+        );
+      },
+    ),
+    makeTool(
+      "paperclipCreateAgentHire",
+      "Submit an agent-hire request (same payload shape as the paperclip-create-agent skill). The server may auto-create a board approval if the company requires it.",
+      createAgentHireToolSchema,
+      async ({ companyId, ...body }) =>
+        client.requestJson(
+          "POST",
+          `/companies/${client.resolveCompanyId(companyId)}/agent-hires`,
+          { body },
+        ),
+    ),
+    makeTool(
+      "paperclipGetCompanySettings",
+      "Read company-level settings and status (requireBoardApprovalForNewAgents, codexSandboxLoopbackEnabled, feedbackDataSharingEnabled, pauseReason, budget, etc.).",
+      z.object({ companyId: companyIdOptional }),
+      async ({ companyId }) => client.requestJson("GET", `/companies/${client.resolveCompanyId(companyId)}`),
+    ),
+    makeTool(
+      "paperclipUpdateCompanySettings",
+      "Update company-level settings (board toggles, status, budgets, branding pointers). Only the fields you pass are patched; all are optional.",
+      updateCompanySettingsToolSchema,
+      async ({ companyId, ...body }) =>
+        client.requestJson("PATCH", `/companies/${client.resolveCompanyId(companyId)}`, { body }),
+    ),
+    makeTool(
+      "paperclipListRoutines",
+      "List routines (scheduled / webhook-triggered automations) for a company.",
+      z.object({ companyId: companyIdOptional }),
+      async ({ companyId }) =>
+        client.requestJson("GET", `/companies/${client.resolveCompanyId(companyId)}/routines`),
+    ),
+    makeTool(
+      "paperclipGetRoutine",
+      "Get a routine with its triggers by id.",
+      z.object({ routineId: z.string().uuid() }),
+      async ({ routineId }) => client.requestJson("GET", `/routines/${encodeURIComponent(routineId)}`),
+    ),
+    makeTool(
+      "paperclipListCompanySkills",
+      "List the skills installed in a company's skill library.",
+      z.object({ companyId: companyIdOptional }),
+      async ({ companyId }) =>
+        client.requestJson("GET", `/companies/${client.resolveCompanyId(companyId)}/skills`),
+    ),
+    makeTool(
+      "paperclipPreviewCompanyImport",
+      "Preview a company portability import without applying it. Returns the proposed agent/project/issue actions and any collision warnings. Supports allowNewAgents to bypass the approval gate when importing into a company with requireBoardApprovalForNewAgents.",
+      previewCompanyImportToolSchema,
+      async ({ companyId, ...body }) =>
+        client.requestJson(
+          "POST",
+          `/companies/${client.resolveCompanyId(companyId)}/imports/preview`,
+          { body },
+        ),
+    ),
+    makeTool(
+      "paperclipDiagnoseIssue",
+      "One-call diagnostic for an issue: status, executionLock age + stale flag, executionState (current stage/participant), blockers with their statuses, last 3 comments, and a suggestedAction when the issue is recoverably stuck.",
+      diagnoseIssueSchema,
+      async ({ issueId }) => {
+        const now = Date.now();
+        const issue = await client.requestJson<Record<string, unknown>>(
+          "GET",
+          `/issues/${encodeURIComponent(issueId)}`,
+        );
+        const executionRunId =
+          typeof issue.executionRunId === "string" ? issue.executionRunId : null;
+        const blockedByIds = Array.isArray(issue.blockedByIssueIds)
+          ? (issue.blockedByIssueIds as string[])
+          : [];
+
+        const [commentsRaw, runRaw, blockers] = await Promise.all([
+          safeGet<unknown>(
+            client,
+            `/issues/${encodeURIComponent(issueId)}/comments?order=desc&limit=3`,
+          ),
+          executionRunId
+            ? safeGet<Record<string, unknown>>(
+                client,
+                `/heartbeat-runs/${encodeURIComponent(executionRunId)}`,
+              )
+            : Promise.resolve(null),
+          Promise.all(
+            blockedByIds.map(async (id) => {
+              const b = await safeGet<Record<string, unknown>>(
+                client,
+                `/issues/${encodeURIComponent(id)}`,
+              );
+              return b
+                ? { id, identifier: b.identifier, status: b.status, title: b.title }
+                : { id, error: "could not load" };
+            }),
+          ),
+        ]);
+
+        const runStatus = typeof runRaw?.status === "string" ? (runRaw.status as string) : null;
+        const lockAgeMs = ageMs(
+          typeof issue.executionLockedAt === "string" ? issue.executionLockedAt : null,
+          now,
+        );
+        const staleLock =
+          !!executionRunId &&
+          (runRaw === null || (runStatus !== null && TERMINAL_RUN_STATUSES.has(runStatus)));
+
+        let suggestedAction: string | null = null;
+        if (staleLock) {
+          suggestedAction =
+            "Call paperclipReleaseStaleExecutionLock to clear the stale execution lock, then reassign or checkout the issue.";
+        } else if (blockers.some((b) => b.status && b.status !== "done" && b.status !== "cancelled")) {
+          suggestedAction = "Issue is blocked by open dependencies. Unblock those first.";
+        }
+
+        return {
+          issue: {
+            id: issue.id,
+            identifier: issue.identifier,
+            status: issue.status,
+            assigneeAgentId: issue.assigneeAgentId,
+            assigneeUserId: issue.assigneeUserId,
+            executionRunId,
+            executionLockedAt: issue.executionLockedAt,
+            executionLockAgeMs: lockAgeMs,
+            executionState: issue.executionState,
+            executionPolicy: issue.executionPolicy,
+            blockedByIssueIds: blockedByIds,
+          },
+          currentRun: runRaw
+            ? {
+                id: runRaw.id,
+                status: runStatus,
+                startedAt: runRaw.startedAt,
+                finishedAt: runRaw.finishedAt,
+                error: runRaw.error,
+                errorCode: runRaw.errorCode,
+              }
+            : null,
+          staleLock,
+          blockers,
+          recentComments: commentsRaw,
+          suggestedAction,
+        };
+      },
+    ),
+    makeTool(
+      "paperclipDiagnoseAgent",
+      "One-call diagnostic for an agent: status, pauseReason, lastHeartbeatAt age, recent runs with their statuses, open hire approval (if any), and the issues currently locked to this agent.",
+      diagnoseAgentSchema,
+      async ({ agentId, recentRunLimit }) => {
+        const now = Date.now();
+        const agent = await client.requestJson<Record<string, unknown>>(
+          "GET",
+          `/agents/${encodeURIComponent(agentId)}`,
+        );
+        const companyId =
+          typeof agent.companyId === "string" ? (agent.companyId as string) : null;
+
+        const recentRunsParams = new URLSearchParams();
+        if (companyId) recentRunsParams.set("companyId", companyId);
+        recentRunsParams.set("agentId", String(agent.id));
+        recentRunsParams.set("limit", String(recentRunLimit));
+
+        const [recentRunsRaw, lockedIssuesRaw, hiresRaw] = await Promise.all([
+          companyId
+            ? safeGet<unknown>(
+                client,
+                `/companies/${companyId}/heartbeat-runs?${recentRunsParams.toString()}`,
+              )
+            : Promise.resolve(null),
+          companyId
+            ? safeGet<unknown>(
+                client,
+                `/companies/${companyId}/issues?assigneeAgentId=${encodeURIComponent(String(agent.id))}&status=in_progress`,
+              )
+            : Promise.resolve(null),
+          companyId
+            ? safeGet<unknown>(
+                client,
+                `/companies/${companyId}/approvals?type=hire_agent&status=pending`,
+              )
+            : Promise.resolve(null),
+        ]);
+
+        const recentRuns = Array.isArray(recentRunsRaw)
+          ? (recentRunsRaw as Array<Record<string, unknown>>)
+          : [];
+        const failedRuns = recentRuns.filter(
+          (r) => r.status === "failed" || r.status === "timed_out",
+        );
+
+        const lockedIssues = Array.isArray(lockedIssuesRaw)
+          ? (lockedIssuesRaw as Array<Record<string, unknown>>).filter(
+              (i) => typeof i.executionRunId === "string",
+            )
+          : [];
+
+        const openHireApprovals = Array.isArray(hiresRaw)
+          ? (hiresRaw as Array<Record<string, unknown>>).filter((a) => {
+              const payload = (a.payload ?? {}) as Record<string, unknown>;
+              return payload.agentId === agent.id;
+            })
+          : [];
+
+        return {
+          agent: {
+            id: agent.id,
+            name: agent.name,
+            role: agent.role,
+            status: agent.status,
+            adapterType: agent.adapterType,
+            pauseReason: agent.pauseReason,
+            lastHeartbeatAt: agent.lastHeartbeatAt,
+            lastHeartbeatAgeMs: ageMs(
+              typeof agent.lastHeartbeatAt === "string" ? agent.lastHeartbeatAt : null,
+              now,
+            ),
+            budgetMonthlyCents: agent.budgetMonthlyCents,
+            spentMonthlyCents: agent.spentMonthlyCents,
+          },
+          recentRuns: recentRuns.slice(0, recentRunLimit),
+          recentFailedRunCount: failedRuns.length,
+          lockedIssues: lockedIssues.map((i) => ({
+            id: i.id,
+            identifier: i.identifier,
+            status: i.status,
+            executionRunId: i.executionRunId,
+            executionLockedAt: i.executionLockedAt,
+          })),
+          openHireApprovals,
+        };
+      },
+    ),
+    makeTool(
+      "paperclipDiagnoseCompany",
+      "Top-level one-call diagnostic: paused or over-budget agents, issues with potentially stale execution locks, pending approvals older than approvalAgeWarnHours, routines with missed/overdue next-fire windows, and top-level company pause status.",
+      diagnoseCompanySchema,
+      async ({ companyId, approvalAgeWarnHours }) => {
+        const now = Date.now();
+        const resolvedCompanyId = client.resolveCompanyId(companyId);
+        const warnMs = approvalAgeWarnHours * 60 * 60 * 1000;
+
+        const [company, agentsRaw, approvalsRaw, activeIssuesRaw, routinesRaw] = await Promise.all([
+          client.requestJson<Record<string, unknown>>("GET", `/companies/${resolvedCompanyId}`),
+          safeGet<unknown>(client, `/companies/${resolvedCompanyId}/agents`),
+          safeGet<unknown>(client, `/companies/${resolvedCompanyId}/approvals?status=pending`),
+          safeGet<unknown>(client, `/companies/${resolvedCompanyId}/issues?status=in_progress`),
+          safeGet<unknown>(client, `/companies/${resolvedCompanyId}/routines`),
+        ]);
+
+        const agents = Array.isArray(agentsRaw)
+          ? (agentsRaw as Array<Record<string, unknown>>)
+          : [];
+        const pausedAgents = agents.filter((a) => a.status === "paused" || a.pauseReason);
+
+        const approvals = Array.isArray(approvalsRaw)
+          ? (approvalsRaw as Array<Record<string, unknown>>)
+          : [];
+        const overdueApprovals = approvals
+          .map((a) => ({
+            approval: a,
+            ageMs: ageMs(typeof a.createdAt === "string" ? a.createdAt : null, now),
+          }))
+          .filter(({ ageMs: age }) => age !== null && age > warnMs);
+
+        const activeIssues = Array.isArray(activeIssuesRaw)
+          ? (activeIssuesRaw as Array<Record<string, unknown>>)
+          : [];
+        const issuesWithLocks = activeIssues.filter(
+          (i) => typeof i.executionRunId === "string",
+        );
+        const candidateStaleIssues = await Promise.all(
+          issuesWithLocks.map(async (issue) => {
+            const runId = String(issue.executionRunId);
+            const run = await safeGet<Record<string, unknown>>(
+              client,
+              `/heartbeat-runs/${encodeURIComponent(runId)}`,
+            );
+            const runStatus = typeof run?.status === "string" ? (run.status as string) : null;
+            const stale =
+              run === null || (runStatus !== null && TERMINAL_RUN_STATUSES.has(runStatus));
+            return stale
+              ? {
+                  id: issue.id,
+                  identifier: issue.identifier,
+                  status: issue.status,
+                  executionRunId: runId,
+                  runStatus,
+                  executionLockedAt: issue.executionLockedAt,
+                }
+              : null;
+          }),
+        );
+        const staleLockIssues = candidateStaleIssues.filter((x) => x !== null);
+
+        const routines = Array.isArray(routinesRaw)
+          ? (routinesRaw as Array<Record<string, unknown>>)
+          : [];
+        const overdueRoutines = routines.filter((r) => {
+          if (typeof r.nextRunAt !== "string") return false;
+          const next = Date.parse(r.nextRunAt);
+          return Number.isFinite(next) && next < now - warnMs;
+        });
+
+        return {
+          company: {
+            id: company.id,
+            name: company.name,
+            status: company.status,
+            pauseReason: company.pauseReason,
+            budgetMonthlyCents: company.budgetMonthlyCents,
+            spentMonthlyCents: company.spentMonthlyCents,
+            requireBoardApprovalForNewAgents: company.requireBoardApprovalForNewAgents,
+            codexSandboxLoopbackEnabled: company.codexSandboxLoopbackEnabled,
+          },
+          pausedAgents: pausedAgents.map((a) => ({
+            id: a.id,
+            name: a.name,
+            status: a.status,
+            pauseReason: a.pauseReason,
+          })),
+          overdueApprovals: overdueApprovals.map(({ approval, ageMs: age }) => ({
+            id: approval.id,
+            type: approval.type,
+            status: approval.status,
+            createdAt: approval.createdAt,
+            ageMs: age,
+          })),
+          staleLockIssues,
+          overdueRoutines: overdueRoutines.map((r) => ({
+            id: r.id,
+            name: r.name,
+            nextRunAt: r.nextRunAt,
+            lastTriggeredAt: r.lastTriggeredAt,
+          })),
+          summary: {
+            pausedAgentCount: pausedAgents.length,
+            overdueApprovalCount: overdueApprovals.length,
+            staleLockCount: staleLockIssues.length,
+            overdueRoutineCount: overdueRoutines.length,
+            approvalAgeWarnHours,
+          },
+        };
+      },
     ),
     makeTool(
       "paperclipApiRequest",
