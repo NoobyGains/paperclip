@@ -27,6 +27,10 @@ const mockIssueApprovalService = vi.hoisted(() => ({
   linkManyForApproval: vi.fn(),
 }));
 const mockWorkspaceOperationService = vi.hoisted(() => ({}));
+const mockUserProfileService = vi.hoisted(() => ({
+  getProfile: vi.fn().mockResolvedValue({ userId: "test-user", subscriptionOnly: false }),
+  updateProfile: vi.fn(),
+}));
 const mockAgentInstructionsService = vi.hoisted(() => ({
   getBundle: vi.fn(),
   readFile: vi.fn(),
@@ -81,12 +85,14 @@ vi.mock("../services/index.js", () => ({
   secretService: () => mockSecretService,
   syncInstructionsBundleConfigFromFilePath: mockSyncInstructionsBundleConfigFromFilePath,
   workspaceOperationService: () => mockWorkspaceOperationService,
+  userProfileService: () => mockUserProfileService,
 }));
 
 vi.mock("../adapters/index.js", () => ({
   findServerAdapter: vi.fn(() => mockAdapter),
   findActiveServerAdapter: vi.fn(() => mockAdapter),
   listAdapterModels: vi.fn(),
+  listEnabledServerAdapters: vi.fn(() => []),
   detectAdapterModel: vi.fn(),
 }));
 
@@ -114,12 +120,14 @@ function registerModuleMocks() {
     secretService: () => mockSecretService,
     syncInstructionsBundleConfigFromFilePath: mockSyncInstructionsBundleConfigFromFilePath,
     workspaceOperationService: () => mockWorkspaceOperationService,
+    userProfileService: () => mockUserProfileService,
   }));
 
   vi.doMock("../adapters/index.js", () => ({
     findServerAdapter: vi.fn(() => mockAdapter),
     findActiveServerAdapter: vi.fn(() => mockAdapter),
     listAdapterModels: vi.fn(),
+    listEnabledServerAdapters: vi.fn(() => []),
     detectAdapterModel: vi.fn(),
   }));
 }
@@ -259,6 +267,7 @@ describe("agent skill routes", () => {
         },
       }),
     );
+    mockUserProfileService.getProfile.mockResolvedValue({ userId: "test-user", subscriptionOnly: false });
     mockLogActivity.mockResolvedValue(undefined);
     mockAccessService.canUser.mockResolvedValue(true);
     mockAccessService.hasPermission.mockResolvedValue(true);
