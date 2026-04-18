@@ -1,0 +1,15 @@
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "fixture-python-poetry"
+version = "0.1.0"
+description = "Archetype fixture for python-poetry detection"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pytest = "^7.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

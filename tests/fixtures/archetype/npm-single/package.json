@@ -1,0 +1,4 @@
+{
+  "name": "fixture-npm-single",
+  "scripts": { "test": "jest", "build": "tsc", "lint": "eslint ." }
+}

@@ -1,0 +1,4 @@
+{
+  "name": "fixture-pnpm-monorepo",
+  "scripts": { "test": "vitest run", "db:migrate": "drizzle-kit migrate", "build": "pnpm -r build" }
+}
