@@ -4160,10 +4160,12 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
     const importedSlugToAgentId = new Map<string, string>();
     const existingSlugToAgentId = new Map<string, string>();
     const agentStatusById = new Map<string, string | null | undefined>();
+    const existingAdapterConfigById = new Map<string, Record<string, unknown>>();
     const existingAgents = await agents.list(targetCompany.id);
     for (const existing of existingAgents) {
       existingSlugToAgentId.set(normalizeAgentUrlKey(existing.name) ?? existing.id, existing.id);
       agentStatusById.set(existing.id, existing.status);
+      existingAdapterConfigById.set(existing.id, existing.adapterConfig as Record<string, unknown>);
     }
     const importedSlugToProjectId = new Map<string, string>();
     const importedProjectWorkspaceIdByProjectSlug = new Map<string, Map<string, string>>();
@@ -4290,7 +4292,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           // bundle keys on the first update and restored them on the second;
           // any failure between the two left the GUI Instructions tab empty
           // for claude_local agents even though runtime still worked.
-          let materializedAdapterConfig = patch.adapterConfig as Record<string, unknown>;
+          let materializedAdapterConfig: Record<string, unknown> | null = null;
           try {
             const materialized = await instructions.materializeManagedBundle(
               { id: planAgent.existingAgentId, companyId: targetCompany.id, name: planAgent.plannedName, adapterConfig: patch.adapterConfig },
@@ -4299,12 +4301,21 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
             );
             materializedAdapterConfig = materialized.adapterConfig;
           } catch (err) {
-            warnings.push(`Failed to materialize instructions bundle for ${manifestAgent.slug}: ${err instanceof Error ? err.message : String(err)}`);
+            warnings.push(`Failed to materialize instructions bundle for ${manifestAgent.slug}: ${err instanceof Error ? err.message : String(err)}; existing adapterConfig preserved.`);
           }
-          const updatedAgent = await agents.update(planAgent.existingAgentId, {
-            ...patch,
-            adapterConfig: materializedAdapterConfig,
-          });
+          // If materialization failed, preserve the existing adapterConfig so
+          // the instruction-bundle pointer is not wiped (regression guard for
+          // fork issue #3). Only persist a patch when we have a valid
+          // materialized result.
+          const updatedAgent = materializedAdapterConfig !== null
+            ? await agents.update(planAgent.existingAgentId, {
+                ...patch,
+                adapterConfig: materializedAdapterConfig,
+              })
+            : await agents.update(planAgent.existingAgentId, {
+                ...patch,
+                adapterConfig: existingAdapterConfigById.get(planAgent.existingAgentId) ?? (patch.adapterConfig as Record<string, unknown>),
+              });
           if (!updatedAgent) {
             warnings.push(`Skipped update for missing agent ${planAgent.existingAgentId}.`);
             resultAgents.push({

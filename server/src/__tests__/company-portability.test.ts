@@ -3221,4 +3221,87 @@ describe("company portability", () => {
       }),
     });
   });
+
+  // Fork Issue BUG4 regression: when updating an existing agent and
+  // materializeManagedBundle throws, the existing adapterConfig (including
+  // its instructionsFilePath pointer) must be preserved in the DB update.
+  // The stripped patch.adapterConfig must NOT be written, or the agent loses
+  // its instruction-bundle pointer and the GUI Instructions tab goes empty.
+  it("preserves existing adapterConfig.instructionsFilePath when materializeManagedBundle throws during agent update", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    // agent-1 already has a live instructionsFilePath on the target company
+    const preImportInstructionsFilePath = "/var/paperclip/agents/agent-1/AGENTS.md";
+    agentSvc.list.mockResolvedValue([
+      {
+        id: "agent-1",
+        name: "ClaudeCoder",
+        status: "idle",
+        role: "engineer",
+        title: "Software Engineer",
+        icon: "code",
+        reportsTo: null,
+        capabilities: "Writes code",
+        adapterType: "claude_local",
+        adapterConfig: {
+          instructionsBundleMode: "managed",
+          instructionsRootPath: "/var/paperclip/agents/agent-1",
+          instructionsEntryFile: "AGENTS.md",
+          instructionsFilePath: preImportInstructionsFilePath,
+          model: "claude-opus-4-6",
+        },
+        runtimeConfig: { heartbeat: { intervalSec: 3600 } },
+        budgetMonthlyCents: 0,
+        permissions: { canCreateAgents: false },
+        metadata: null,
+      },
+    ]);
+
+    // Materialize throws on this import
+    agentInstructionsSvc.materializeManagedBundle.mockRejectedValueOnce(
+      new Error("disk quota exceeded"),
+    );
+
+    agentSvc.update.mockImplementation(async (id: string, patch: Record<string, unknown>) => ({
+      id,
+      name: "ClaudeCoder",
+      adapterType: patch.adapterType ?? "claude_local",
+      adapterConfig: patch.adapterConfig,
+    }));
+
+    const exported = await portability.exportBundle("company-1", {
+      include: { company: true, agents: true, projects: false, issues: false },
+    });
+
+    const result = await portability.importBundle({
+      source: {
+        type: "inline",
+        rootPath: exported.rootPath,
+        files: exported.files,
+      },
+      include: { company: false, agents: true, projects: false, issues: false },
+      target: { mode: "existing_company", companyId: "company-1" },
+      agents: ["claudecoder"],
+      collisionStrategy: "replace",
+    }, "user-1");
+
+    // Import should complete (with a warning, not a hard failure)
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("disk quota exceeded"),
+      ]),
+    );
+
+    // The update call must have been made
+    expect(agentSvc.update).toHaveBeenCalled();
+
+    // The adapterConfig written to the DB must preserve the pre-import
+    // instructionsFilePath — it must NOT be stripped to undefined/null.
+    const updateCall = agentSvc.update.mock.calls.find(
+      ([id]: [string]) => id === "agent-1",
+    );
+    expect(updateCall).toBeDefined();
+    const writtenAdapterConfig = updateCall?.[1]?.adapterConfig as Record<string, unknown>;
+    expect(writtenAdapterConfig?.instructionsFilePath).toBe(preImportInstructionsFilePath);
+  });
 });
