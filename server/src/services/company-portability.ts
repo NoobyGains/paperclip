@@ -2421,6 +2421,10 @@ function buildManifestFromPackageFiles(
         typeof paperclipCompany.requireBoardApprovalForNewAgents === "boolean"
           ? paperclipCompany.requireBoardApprovalForNewAgents
           : readCompanyApprovalDefault(companyFrontmatter),
+      codexSandboxLoopbackEnabled:
+        typeof paperclipCompany.codexSandboxLoopbackEnabled === "boolean"
+          ? paperclipCompany.codexSandboxLoopbackEnabled
+          : true,
       feedbackDataSharingEnabled:
         typeof paperclipCompany.feedbackDataSharingEnabled === "boolean"
           ? paperclipCompany.feedbackDataSharingEnabled
@@ -3455,6 +3459,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           brandColor: company.brandColor ?? null,
           logoPath: companyLogoPath,
           requireBoardApprovalForNewAgents: company.requireBoardApprovalForNewAgents ? undefined : false,
+          codexSandboxLoopbackEnabled: company.codexSandboxLoopbackEnabled ? undefined : false,
           feedbackDataSharingEnabled: company.feedbackDataSharingEnabled ? true : undefined,
           feedbackDataSharingConsentAt: company.feedbackDataSharingConsentAt?.toISOString() ?? null,
           feedbackDataSharingConsentByUserId: company.feedbackDataSharingConsentByUserId ?? null,
@@ -3977,6 +3982,9 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         requireBoardApprovalForNewAgents: include.company
           ? (sourceManifest.company?.requireBoardApprovalForNewAgents ?? true)
           : true,
+        codexSandboxLoopbackEnabled: include.company
+          ? (sourceManifest.company?.codexSandboxLoopbackEnabled ?? true)
+          : true,
         feedbackDataSharingEnabled: include.company
           ? (sourceManifest.company?.feedbackDataSharingEnabled ?? false)
           : false,
@@ -4006,6 +4014,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           description: sourceManifest.company.description,
           brandColor: sourceManifest.company.brandColor,
           requireBoardApprovalForNewAgents: sourceManifest.company.requireBoardApprovalForNewAgents,
+          codexSandboxLoopbackEnabled: sourceManifest.company.codexSandboxLoopbackEnabled,
           feedbackDataSharingEnabled: sourceManifest.company.feedbackDataSharingEnabled,
           feedbackDataSharingConsentAt: sourceManifest.company.feedbackDataSharingConsentAt
             ? new Date(sourceManifest.company.feedbackDataSharingConsentAt)
