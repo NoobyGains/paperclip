@@ -282,6 +282,175 @@ describe("githubIssueBridge", () => {
     });
     expect(issueService.create).not.toHaveBeenCalled();
   });
+
+  it("invokes assertCanAssignTo when the resolved assignee is a non-self agent", async () => {
+    const project = buildProject();
+    const projectService = {
+      getById: vi.fn(async () => project),
+    };
+    const issueService = {
+      create: vi.fn(async (_companyId: string, input: Record<string, unknown>) => ({
+        id: "issue-1",
+        companyId: "company-1",
+        ...input,
+      })),
+    };
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(async () => []),
+        })),
+      })),
+    };
+    const agentService = {
+      list: vi.fn(async () => ([
+        { id: "ceo-1", role: "ceo", status: "active" },
+      ])),
+    };
+    const ghIssues: GithubIssue[] = [
+      {
+        number: 30,
+        title: "Gate test",
+        body: null,
+        labels: [],
+        url: "https://github.com/NoobyGains/paperclip/issues/30",
+      },
+    ];
+
+    const { githubIssueBridge } = await import("../services/github-issue-bridge.js");
+    const bridge = githubIssueBridge(db as never, {
+      projectService: projectService as never,
+      issueService: issueService as never,
+      agentService: agentService as never,
+      detectGitHubRepo: vi.fn(async () => "NoobyGains/paperclip"),
+      execGh: vi.fn(async () => ghIssues) as never,
+    });
+
+    const assertCanAssignTo = vi.fn(async (_id: string | null) => {});
+
+    // Caller is "agent-other", assignee resolves to "ceo-1" — non-self
+    await bridge.syncProject("project-1", {
+      actor: { actorId: "agent-other", agentId: "agent-other" },
+      assertCanAssignTo,
+    });
+
+    expect(assertCanAssignTo).toHaveBeenCalledOnce();
+    expect(assertCanAssignTo).toHaveBeenCalledWith("ceo-1");
+  });
+
+  it("does NOT invoke assertCanAssignTo when the resolved assignee equals the calling agent", async () => {
+    const project = buildProject({
+      primaryWorkspace: {
+        ...(buildProject().primaryWorkspace as Record<string, unknown>),
+        runtimeConfig: {
+          workspaceRuntime: null,
+          desiredState: null,
+          serviceStates: null,
+          githubBridge: { enabled: true, agentIdOverride: "ceo-1" },
+        },
+      },
+    });
+    const projectService = {
+      getById: vi.fn(async () => project),
+    };
+    const issueService = {
+      create: vi.fn(async (_companyId: string, input: Record<string, unknown>) => ({
+        id: "issue-1",
+        companyId: "company-1",
+        ...input,
+      })),
+    };
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(async () => []),
+        })),
+      })),
+    };
+    const agentService = {
+      list: vi.fn(async () => ([
+        { id: "ceo-1", role: "ceo", status: "active" },
+      ])),
+    };
+    const ghIssues: GithubIssue[] = [
+      {
+        number: 31,
+        title: "Self-assign test",
+        body: null,
+        labels: [],
+        url: "https://github.com/NoobyGains/paperclip/issues/31",
+      },
+    ];
+
+    const { githubIssueBridge } = await import("../services/github-issue-bridge.js");
+    const bridge = githubIssueBridge(db as never, {
+      projectService: projectService as never,
+      issueService: issueService as never,
+      agentService: agentService as never,
+      detectGitHubRepo: vi.fn(async () => "NoobyGains/paperclip"),
+      execGh: vi.fn(async () => ghIssues) as never,
+    });
+
+    const assertCanAssignTo = vi.fn(async (_id: string | null) => {});
+
+    // Caller IS "ceo-1", assignee also resolves to "ceo-1" via override — self
+    await bridge.syncProject("project-1", {
+      actor: { actorId: "ceo-1", agentId: "ceo-1" },
+      assertCanAssignTo,
+    });
+
+    expect(assertCanAssignTo).not.toHaveBeenCalled();
+  });
+
+  it("propagates an error thrown by assertCanAssignTo and prevents issue creation", async () => {
+    const project = buildProject();
+    const projectService = {
+      getById: vi.fn(async () => project),
+    };
+    const issueService = {
+      create: vi.fn(),
+    };
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(async () => []),
+        })),
+      })),
+    };
+    const agentService = {
+      list: vi.fn(async () => ([
+        { id: "ceo-1", role: "ceo", status: "active" },
+      ])),
+    };
+    const ghIssues: GithubIssue[] = [
+      {
+        number: 32,
+        title: "Forbidden assign test",
+        body: null,
+        labels: [],
+        url: "https://github.com/NoobyGains/paperclip/issues/32",
+      },
+    ];
+
+    const { githubIssueBridge } = await import("../services/github-issue-bridge.js");
+    const bridge = githubIssueBridge(db as never, {
+      projectService: projectService as never,
+      issueService: issueService as never,
+      agentService: agentService as never,
+      detectGitHubRepo: vi.fn(async () => "NoobyGains/paperclip"),
+      execGh: vi.fn(async () => ghIssues) as never,
+    });
+
+    const permissionError = new Error("Missing permission: tasks:assign");
+    await expect(
+      bridge.syncProject("project-1", {
+        actor: { actorId: "low-agent", agentId: "low-agent" },
+        assertCanAssignTo: async () => { throw permissionError; },
+      }),
+    ).rejects.toThrow("Missing permission: tasks:assign");
+
+    expect(issueService.create).not.toHaveBeenCalled();
+  });
 });
 
 describe("githubBridgeRoutes", () => {
@@ -292,18 +461,30 @@ describe("githubBridgeRoutes", () => {
     syncProject: vi.fn(),
   }));
   const mockLogActivity = vi.hoisted(() => vi.fn());
+  const mockAccessService = vi.hoisted(() => ({
+    canUser: vi.fn(async () => true),
+    hasPermission: vi.fn(async () => true),
+  }));
+  const mockAgentService = vi.hoisted(() => ({
+    getById: vi.fn(async () => null),
+    list: vi.fn(async () => []),
+  }));
 
   function registerModuleMocks() {
     vi.doMock("../services/index.js", () => ({
       logActivity: mockLogActivity,
       projectService: () => mockProjectService,
+      accessService: () => mockAccessService,
+      agentService: () => mockAgentService,
     }));
     vi.doMock("../services/github-issue-bridge.js", () => ({
       githubIssueBridge: () => mockBridge,
     }));
   }
 
-  async function createApp() {
+  async function createApp(
+    actorOverride?: Record<string, unknown>,
+  ) {
     const [{ githubBridgeRoutes }, { errorHandler }] = await Promise.all([
       vi.importActual<typeof import("../routes/github-bridge.js")>("../routes/github-bridge.js"),
       vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
@@ -311,7 +492,7 @@ describe("githubBridgeRoutes", () => {
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
-      (req as any).actor = {
+      (req as any).actor = actorOverride ?? {
         type: "board",
         userId: "board-user",
         companyIds: ["company-1"],
@@ -357,7 +538,10 @@ describe("githubBridgeRoutes", () => {
     });
     expect(mockBridge.syncProject).toHaveBeenCalledWith(
       "project-1",
-      expect.objectContaining({ actorId: "board-user", agentId: null }),
+      expect.objectContaining({
+        actor: expect.objectContaining({ actorId: "board-user", agentId: null }),
+        assertCanAssignTo: expect.any(Function),
+      }),
     );
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
@@ -373,5 +557,79 @@ describe("githubBridgeRoutes", () => {
         },
       }),
     );
+  });
+
+  describe("tasks:assign permission gate", () => {
+    it("returns 403 when an agent without tasks:assign would assign to a non-self agent via the bridge", async () => {
+      // The bridge calls assertCanAssignTo when it resolves a non-self assignee.
+      // We simulate that by having syncProject invoke the callback with a non-self agent id.
+      mockBridge.syncProject.mockImplementation(
+        async (_projectId: string, opts: { assertCanAssignTo?: (id: string) => Promise<void> }) => {
+          // Simulate: bridge resolved assigneeAgentId = "ceo-1", caller is "agent-2"
+          if (opts.assertCanAssignTo) await opts.assertCanAssignTo("ceo-1");
+          return { imported: 1, skippedAlreadyMirrored: 0, createdIssueIds: ["issue-1"], warnings: [] };
+        },
+      );
+      // Agent actor without tasks:assign grant and not CEO
+      mockAccessService.hasPermission.mockResolvedValue(false);
+      mockAgentService.getById.mockResolvedValue({
+        id: "agent-2",
+        companyId: "company-1",
+        role: "engineer",
+        permissions: {},
+      });
+
+      const app = await createApp({
+        type: "agent",
+        agentId: "agent-2",
+        companyId: "company-1",
+      });
+
+      const res = await request(app).post("/api/projects/project-1/github-issues/sync");
+      expect(res.status).toBe(403);
+      expect(res.body).toMatchObject({ error: expect.stringContaining("tasks:assign") });
+    });
+
+    it("succeeds when an agent with tasks:assign calls the sync endpoint", async () => {
+      mockBridge.syncProject.mockImplementation(
+        async (_projectId: string, opts: { assertCanAssignTo?: (id: string) => Promise<void> }) => {
+          if (opts.assertCanAssignTo) await opts.assertCanAssignTo("ceo-1");
+          return { imported: 1, skippedAlreadyMirrored: 0, createdIssueIds: ["issue-1"], warnings: [] };
+        },
+      );
+      // Agent has tasks:assign
+      mockAccessService.hasPermission.mockResolvedValue(true);
+
+      const app = await createApp({
+        type: "agent",
+        agentId: "agent-2",
+        companyId: "company-1",
+      });
+
+      const res = await request(app).post("/api/projects/project-1/github-issues/sync");
+      expect(res.status).toBe(200);
+    });
+
+    it("succeeds when the bridge assigns to the calling agent itself (self-assign)", async () => {
+      // When assigneeAgentId === actor.agentId, assertCanAssignTo is NOT called by the service.
+      // We verify the route passes the callback but the bridge (real logic) won't invoke it
+      // for self-assignments. Here we simply don't call the callback (as real service does).
+      mockBridge.syncProject.mockResolvedValue({
+        imported: 1,
+        skippedAlreadyMirrored: 0,
+        createdIssueIds: ["issue-1"],
+        warnings: [],
+      });
+      mockAccessService.hasPermission.mockResolvedValue(false);
+
+      const app = await createApp({
+        type: "agent",
+        agentId: "agent-2",
+        companyId: "company-1",
+      });
+
+      const res = await request(app).post("/api/projects/project-1/github-issues/sync");
+      expect(res.status).toBe(200);
+    });
   });
 });

@@ -183,6 +183,18 @@ async function resolveAssigneeAgentId(input: {
   return ceo?.id ?? null;
 }
 
+export interface GithubIssueBridgeSyncOptions {
+  actor?: { actorId?: string | null; agentId?: string | null };
+  /**
+   * Called after the assignee agent is resolved, before any issues are created.
+   * Receives the resolved assigneeAgentId (may be null if no agent found).
+   * Should throw a 403-equivalent error if the caller lacks permission to assign
+   * to that agent. Only invoked when assigneeAgentId differs from the calling
+   * agent (non-self assignments require tasks:assign).
+   */
+  assertCanAssignTo?: (assigneeAgentId: string | null) => Promise<void> | void;
+}
+
 export function githubIssueBridge(db: Db, deps: GithubIssueBridgeDependencies = {}) {
   const projects = deps.projectService ?? projectService(db);
   const issues = deps.issueService ?? issueService(db);
@@ -193,8 +205,14 @@ export function githubIssueBridge(db: Db, deps: GithubIssueBridgeDependencies = 
   return {
     async syncProject(
       projectId: string,
-      actor?: { actorId?: string | null; agentId?: string | null },
+      actorOrOptions?: { actorId?: string | null; agentId?: string | null } | GithubIssueBridgeSyncOptions,
     ): Promise<GithubIssueBridgeResult> {
+      // Support both legacy (actor-only) and new options-bag call shapes
+      const opts: GithubIssueBridgeSyncOptions =
+        actorOrOptions && ("actor" in actorOrOptions || "assertCanAssignTo" in actorOrOptions)
+          ? (actorOrOptions as GithubIssueBridgeSyncOptions)
+          : { actor: actorOrOptions as { actorId?: string | null; agentId?: string | null } | undefined };
+      const actor = opts.actor;
       const project = await projects.getById(projectId);
       if (!project) {
         throw new Error("project not found");
@@ -245,6 +263,15 @@ export function githubIssueBridge(db: Db, deps: GithubIssueBridgeDependencies = 
         githubBridgeConfig: bridgeConfig,
         warnings,
       });
+
+      // Permission gate: if the bridge will assign issues to an agent other than
+      // the calling actor itself, require tasks:assign — the same gate the direct
+      // createIssue route enforces.
+      const isNonSelfAssignment =
+        assigneeAgentId !== null && assigneeAgentId !== (actor?.agentId ?? null);
+      if (isNonSelfAssignment && opts.assertCanAssignTo) {
+        await opts.assertCanAssignTo(assigneeAgentId);
+      }
 
       const existingIssues = await db
         .select({
