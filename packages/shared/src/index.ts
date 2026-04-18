@@ -401,6 +401,9 @@ export type {
   ProviderQuotaResult,
 } from "./types/index.js";
 
+export type { UserProfile, SubscriptionPlan } from "./types/user-profile.js";
+export { subscriptionPlanSchema } from "./types/user-profile.js";
+
 export {
   sidebarOrderPreferenceSchema,
   upsertSidebarOrderPreferenceSchema,
