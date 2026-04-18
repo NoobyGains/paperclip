@@ -4,6 +4,7 @@ import { AGENT_ICON_NAMES } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import { listServerAdapters } from "../adapters/index.js";
 import { agentService } from "../services/agents.js";
+import { buildOperatorContext } from "../services/operator-context.js";
 
 function hasCreatePermission(agent: { role: string; permissions: Record<string, unknown> | null | undefined }) {
   if (!agent.permissions || typeof agent.permissions !== "object") return false;
@@ -80,6 +81,12 @@ export function llmRoutes(db: Db) {
         adapter.agentConfigurationDoc ??
           `# ${adapterType} agent configuration\n\nNo adapter-specific documentation registered.`,
       );
+  });
+
+  router.get("/llms/operator-context.txt", async (req, res) => {
+    await assertCanRead(req);
+    const body = await buildOperatorContext();
+    res.type("text/plain").send(body);
   });
 
   return router;

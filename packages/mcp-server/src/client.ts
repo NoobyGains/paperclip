@@ -75,6 +75,31 @@ export class PaperclipApiClient {
     return resolved;
   }
 
+  async fetchRawText(path: string): Promise<string> {
+    if (!path.startsWith("/")) {
+      throw new Error(`raw path must start with "/": ${path}`);
+    }
+    // apiUrl is normalized to end in /api; strip that for non-/api endpoints.
+    const apiBase = this.config.apiUrl.replace(/\/api$/, "");
+    const response = await fetch(`${apiBase}${path}`, {
+      headers: {
+        Authorization: `Bearer ${this.config.apiKey}`,
+        Accept: "text/plain",
+      },
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new PaperclipApiError({
+        status: response.status,
+        method: "GET",
+        path,
+        body,
+        message: `GET ${path} failed with ${response.status}`,
+      });
+    }
+    return response.text();
+  }
+
   async requestJson<T>(method: string, path: string, options: JsonRequestOptions = {}): Promise<T> {
     if (!path.startsWith("/")) {
       throw new Error(`API path must start with "/": ${path}`);

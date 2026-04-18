@@ -92,6 +92,31 @@ Escape hatch:
 `paperclipApiRequest` is limited to paths under `/api` and JSON bodies. It is
 meant for endpoints that do not yet have a dedicated MCP tool.
 
+## Resources (state snapshots)
+
+In addition to tools, the server registers nine MCP resources so an operator
+can read paperclip's current state without hunting for individual endpoints.
+Point an MCP client at these URIs:
+
+| URI | Purpose |
+| --- | --- |
+| `paperclip://company/summary` | Company record + board settings + pause + budget |
+| `paperclip://agents` | All agents with status, adapter, lastHeartbeatAt |
+| `paperclip://issues/open` | Issues in `in_progress` status |
+| `paperclip://issues/blocked` | Blocked issues + blockedByIssueIds |
+| `paperclip://runs/recent` | Last 50 heartbeat runs |
+| `paperclip://approvals/pending` | Pending approvals |
+| `paperclip://stuck` | One-shot health check (see below) |
+| `paperclip://routines/schedule` | Routines with nextRunAt, lastTriggeredAt |
+| `paperclip://docs/operator-guide` | The Operator Context Pack — paperclip's feature reference, served by the server's `/llms/operator-context.txt` endpoint |
+
+Read `paperclip://docs/operator-guide` once when connecting — it documents
+paperclip's concepts (agents, issues, runs, approvals, execution policy,
+routines, adapters) with the diagnostic fields that matter and the common
+stuck modes. Read `paperclip://stuck` first when the board asks
+"anything stuck?" — it returns paused agents, stale-lock issues, overdue
+approvals, and overdue routines in one blob.
+
 ## Recovering a stuck issue
 
 When an external operator asks "why is this issue stuck?", call
