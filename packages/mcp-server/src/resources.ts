@@ -124,6 +124,18 @@ export function createResourceDefinitions(
       read: async () => client.fetchRawText("/llms/hiring-playbook.txt"),
     },
     {
+      name: "Operator profile",
+      title: "Operator profile",
+      uri: "paperclip://me/profile",
+      description:
+        "Current operator's subscription declarations and preferences. Use this as the primary signal for picking adapter defaults — if the operator is on subscription-only mode, prefer claude_local and codex_local over API-billed adapters.",
+      mimeType: "application/json",
+      read: async () => {
+        const profile = await client.getMyProfile();
+        return JSON.stringify(profile, null, 2);
+      },
+    },
+    {
       name: "Adapters",
       title: "Enabled adapters",
       uri: "paperclip://adapters",
