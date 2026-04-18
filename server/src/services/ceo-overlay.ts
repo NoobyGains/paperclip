@@ -36,4 +36,44 @@ export async function writeCeoOverlayFiles(
   return written;
 }
 
+export interface RefineCeoOverlayResult {
+  written: string[];
+  historyEntries: string[];
+  repoPath: string;
+}
+
+export async function refineCeoOverlayFiles(
+  projectRepoPath: string,
+  changes: Partial<Record<CeoOverlayFile, string>>,
+): Promise<RefineCeoOverlayResult> {
+  const overlayDir = path.join(projectRepoPath, ".paperclip", "ceo");
+  const historyDir = path.join(overlayDir, ".history");
+  await fs.mkdir(historyDir, { recursive: true });
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const written: string[] = [];
+  const historyEntries: string[] = [];
+
+  for (const [name, content] of Object.entries(changes)) {
+    if (!isCeoOverlayFile(name) || typeof content !== "string") continue;
+
+    const filePath = path.join(overlayDir, name);
+    // Capture previous contents before overwriting.
+    try {
+      const previous = await fs.readFile(filePath, "utf8");
+      const historyName = `${timestamp}-${name}`;
+      const historyPath = path.join(historyDir, historyName);
+      await fs.writeFile(historyPath, previous, "utf8");
+      historyEntries.push(historyName);
+    } catch {
+      // No previous file — nothing to archive.
+    }
+
+    await fs.writeFile(filePath, content, "utf8");
+    written.push(name);
+  }
+
+  return { written, historyEntries, repoPath: projectRepoPath };
+}
+
 export { CEO_OVERLAY_FILES };

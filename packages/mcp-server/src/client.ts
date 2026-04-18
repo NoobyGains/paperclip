@@ -79,6 +79,10 @@ export class PaperclipApiClient {
     return this.requestJson("POST", `/projects/${encodeURIComponent(projectId)}/ceo-overlay`, { body: { files } });
   }
 
+  async refineCeoOverlay(agentId: string, proposedChanges: Record<string, string>): Promise<Record<string, unknown>> {
+    return this.requestJson("POST", `/agents/${encodeURIComponent(agentId)}/ceo-overlay/refine`, { body: { proposedChanges } });
+  }
+
   async fetchRawText(path: string): Promise<string> {
     if (!path.startsWith("/")) {
       throw new Error(`raw path must start with "/": ${path}`);

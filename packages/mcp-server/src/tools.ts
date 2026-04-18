@@ -274,6 +274,7 @@ const TOOL_ANNOTATIONS: Record<string, PaperclipToolAnnotations> = {
   paperclipListHiringProfiles: { ...READ_ONLY, title: "List hiring profiles" },
   paperclipHireWithProfile: { ...SAFE_WRITE, title: "Hire with profile" },
   paperclipWriteCeoOverlay: { ...SAFE_WRITE, title: "Write CEO overlay" },
+  paperclipRefineCeoOverlay: { ...SAFE_WRITE, title: "Refine CEO overlay (self-update with history)" },
   paperclipBootstrapApp: {
     ...SAFE_WRITE,
     title: "Bootstrap a paperclip app",
@@ -1346,6 +1347,20 @@ export function createToolDefinitions(
         }),
       }),
       async ({ projectId, files }) => client.writeCeoOverlay(projectId, files),
+    ),
+    makeTool(
+      "paperclipRefineCeoOverlay",
+      "Self-update your own .paperclip/ceo/ overlay files after your first codebase read. Call this once at the end of your first-contact heartbeat with any project-specific context you want future heartbeats to start with — real commands, real paths, architecture summaries, taboos. The server writes each file atomically and archives the previous version to .paperclip/ceo/.history/<timestamp>-<file> so the operator can roll back via git if needed. Accepts any subset of AGENTS.md, HEARTBEAT.md, SOUL.md, TOOLS.md. Returns { written, historyEntries, repoPath }.",
+      z.object({
+        agentId: z.string().uuid().describe("Your own agent UUID (from PAPERCLIP_AGENT_ID or paperclipMe)."),
+        proposedChanges: z.object({
+          "AGENTS.md": z.string().optional(),
+          "HEARTBEAT.md": z.string().optional(),
+          "SOUL.md": z.string().optional(),
+          "TOOLS.md": z.string().optional(),
+        }).refine((v) => Object.keys(v).length > 0, { message: "at least one file required" }),
+      }),
+      async ({ agentId, proposedChanges }) => client.refineCeoOverlay(agentId, proposedChanges as Record<string, string>),
     ),
     makeTool(
       "paperclipListPlugins",
