@@ -8,6 +8,7 @@ import {
   companies,
   createDb,
   executionWorkspaces,
+  heartbeatRuns,
   instanceSettings,
   issueComments,
   issueInboxArchives,
@@ -1571,5 +1572,224 @@ describeEmbeddedPostgres("issueService.findMentionedProjectIds", () => {
       titleProjectId,
       commentProjectId,
     ]);
+  });
+});
+
+describeEmbeddedPostgres("issueService execution lock recovery", () => {
+  let db!: ReturnType<typeof createDb>;
+  let svc!: ReturnType<typeof issueService>;
+  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+
+  beforeAll(async () => {
+    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-issues-lock-recovery-");
+    db = createDb(tempDb.connectionString);
+    svc = issueService(db);
+    await ensureIssueRelationsTable(db);
+  }, 20_000);
+
+  afterEach(async () => {
+    await db.delete(issueComments);
+    await db.delete(issueRelations);
+    await db.delete(issueInboxArchives);
+    await db.delete(activityLog);
+    await db.delete(issues);
+    await db.delete(heartbeatRuns);
+    await db.delete(executionWorkspaces);
+    await db.delete(projectWorkspaces);
+    await db.delete(projects);
+    await db.delete(agents);
+    await db.delete(instanceSettings);
+    await db.delete(companies);
+  });
+
+  afterAll(async () => {
+    await tempDb?.cleanup();
+  });
+
+  async function seedLockedIssue(input: {
+    runStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out";
+    /**
+     * When true, seed the issue with a run and then delete the run. The
+     * issues.execution_run_id FK has ON DELETE SET NULL, so this simulates
+     * the post-deletion stale state: the lock columns end up nulled via
+     * the database, which exercises the "no lock remaining" branch of the
+     * recovery helper.
+     */
+    deleteRunAfterLock?: boolean;
+  }) {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const runId = randomUUID();
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "CodexCoder",
+      role: "engineer",
+      status: "idle",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId,
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      status: input.runStatus,
+      contextSnapshot: { issueId },
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Locked issue",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      checkoutRunId: runId,
+      executionRunId: runId,
+      executionAgentNameKey: "codexcoder",
+      executionLockedAt: new Date("2026-04-01T12:00:00.000Z"),
+      issueNumber: 1,
+      identifier: `${issuePrefix}-1`,
+    });
+
+    if (input.deleteRunAfterLock) {
+      await db.delete(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
+    }
+
+    return { companyId, agentId, issueId, runId };
+  }
+
+  it("releases the execution lock when the referenced run is in a terminal state", async () => {
+    const { issueId, runId } = await seedLockedIssue({ runStatus: "failed" });
+
+    const outcome = await svc.releaseStaleExecutionLock(issueId);
+    expect(outcome.status).toBe("released");
+    if (outcome.status === "released") {
+      expect(outcome.previousExecutionRunId).toBe(runId);
+      expect(outcome.runStatus).toBe("failed");
+      expect(outcome.reason).toBe("run_terminal");
+    }
+
+    const row = await db
+      .select({
+        executionRunId: issues.executionRunId,
+        executionAgentNameKey: issues.executionAgentNameKey,
+        executionLockedAt: issues.executionLockedAt,
+      })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(row?.executionRunId).toBeNull();
+    expect(row?.executionAgentNameKey).toBeNull();
+    expect(row?.executionLockedAt).toBeNull();
+  });
+
+  it("reports no_lock when the backing run has been deleted (FK set-null cleared the issue reference)", async () => {
+    // In schema, issues.execution_run_id has ON DELETE SET NULL, so a
+    // deleted run automatically clears the issue's lock fields. Verify
+    // the recovery helper handles this gracefully rather than crashing or
+    // double-writing.
+    const { issueId } = await seedLockedIssue({ runStatus: "running", deleteRunAfterLock: true });
+
+    const outcome = await svc.releaseStaleExecutionLock(issueId);
+    expect(outcome.status).toBe("no_lock");
+
+    const row = await db
+      .select({ executionRunId: issues.executionRunId })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(row?.executionRunId).toBeNull();
+  });
+
+  it("does not release the execution lock when the referenced run is still running", async () => {
+    const { issueId, runId } = await seedLockedIssue({ runStatus: "running" });
+
+    const outcome = await svc.releaseStaleExecutionLock(issueId);
+    expect(outcome.status).toBe("active");
+    if (outcome.status === "active") {
+      expect(outcome.runStatus).toBe("running");
+      expect(outcome.executionRunId).toBe(runId);
+    }
+
+    const row = await db
+      .select({ executionRunId: issues.executionRunId })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(row?.executionRunId).toBe(runId);
+  });
+
+  it("does not release the execution lock when the referenced run is still queued", async () => {
+    const { issueId, runId } = await seedLockedIssue({ runStatus: "queued" });
+
+    const outcome = await svc.releaseStaleExecutionLock(issueId);
+    expect(outcome.status).toBe("active");
+
+    const row = await db
+      .select({ executionRunId: issues.executionRunId })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(row?.executionRunId).toBe(runId);
+  });
+
+  it("reports no_lock when the issue has no executionRunId", async () => {
+    const { issueId } = await seedLockedIssue({ runStatus: "failed" });
+    await db
+      .update(issues)
+      .set({ executionRunId: null, executionAgentNameKey: null, executionLockedAt: null })
+      .where(eq(issues.id, issueId));
+
+    const outcome = await svc.releaseStaleExecutionLock(issueId);
+    expect(outcome.status).toBe("no_lock");
+  });
+
+  it("reports not_found for a missing issue", async () => {
+    const outcome = await svc.releaseStaleExecutionLock(randomUUID());
+    expect(outcome.status).toBe("not_found");
+  });
+
+  it("force-releases the execution lock even when the referenced run is still running", async () => {
+    const { issueId, runId } = await seedLockedIssue({ runStatus: "running" });
+
+    const outcome = await svc.forceReleaseExecutionLock(issueId);
+    expect(outcome.status).toBe("released");
+    if (outcome.status === "released") {
+      expect(outcome.previousExecutionRunId).toBe(runId);
+      expect(outcome.runStatus).toBe("running");
+      expect(outcome.runWasActive).toBe(true);
+    }
+
+    const row = await db
+      .select({ executionRunId: issues.executionRunId })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(row?.executionRunId).toBeNull();
+  });
+
+  it("force-release reports runWasActive=false when the backing run is already terminal", async () => {
+    const { issueId } = await seedLockedIssue({ runStatus: "cancelled" });
+
+    const outcome = await svc.forceReleaseExecutionLock(issueId);
+    expect(outcome.status).toBe("released");
+    if (outcome.status === "released") {
+      expect(outcome.runWasActive).toBe(false);
+      expect(outcome.runStatus).toBe("cancelled");
+    }
   });
 });

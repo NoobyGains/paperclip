@@ -47,7 +47,7 @@ import {
 } from "../services/index.js";
 import { logger } from "../middleware/logger.js";
 import { conflict, forbidden, HttpError, notFound, unauthorized } from "../errors.js";
-import { assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import {
   assertNoAgentHostWorkspaceCommandMutation,
   collectIssueWorkspaceCommandPaths,
@@ -2113,6 +2113,126 @@ export function issueRoutes(
     });
 
     res.json(released);
+  });
+
+  // Recovery: release the issue's execution lock *only* if the referenced
+  // heartbeat run is in a terminal state or no longer exists. This is a
+  // safe, caller-agnostic recovery path for stale locks that would
+  // otherwise wedge autonomous agent work. The active-run case is a no-op
+  // that returns 409 so callers can't silently clobber a healthy lock.
+  router.post("/issues/:id/execution-lock/release-stale", async (req, res) => {
+    const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.companyId);
+
+    const outcome = await svc.releaseStaleExecutionLock(id);
+    if (outcome.status === "not_found") {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    if (outcome.status === "active") {
+      res.status(409).json({
+        error: "Execution lock is held by an active run",
+        executionRunId: outcome.executionRunId,
+        runStatus: outcome.runStatus,
+        runAgentId: outcome.runAgentId,
+      });
+      return;
+    }
+    if (outcome.status === "no_lock") {
+      res.json({ released: false, reason: "no_lock" });
+      return;
+    }
+
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      companyId: outcome.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.execution_lock_released_stale",
+      entityType: "issue",
+      entityId: outcome.issueId,
+      details: {
+        previousExecutionRunId: outcome.previousExecutionRunId,
+        previousExecutionAgentNameKey: outcome.previousExecutionAgentNameKey,
+        runStatus: outcome.runStatus,
+        runAgentId: outcome.runAgentId,
+        reason: outcome.reason,
+      },
+    });
+
+    res.json({
+      released: true,
+      reason: outcome.reason,
+      previousExecutionRunId: outcome.previousExecutionRunId,
+      runStatus: outcome.runStatus,
+    });
+  });
+
+  // Admin recovery: board-only force-release of the execution lock,
+  // regardless of the referenced run's status. Use when an operator has
+  // determined the lock is wedging work and the automatic stale-release
+  // path isn't enough (e.g. the run is still queued but orphaned). Always
+  // audit-logged with the prior lock state and whether the backing run was
+  // still active at the time of force-release.
+  router.post("/issues/:id/execution-lock/force-release", async (req, res) => {
+    const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.companyId);
+    assertBoard(req);
+
+    const rawReason = (req.body as { reason?: unknown } | undefined)?.reason;
+    const reasonNote =
+      typeof rawReason === "string" && rawReason.trim().length > 0
+        ? rawReason.trim().slice(0, 500)
+        : null;
+
+    const outcome = await svc.forceReleaseExecutionLock(id);
+    if (outcome.status === "not_found") {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    if (outcome.status === "no_lock") {
+      res.json({ released: false, reason: "no_lock" });
+      return;
+    }
+
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      companyId: outcome.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.execution_lock_force_released",
+      entityType: "issue",
+      entityId: outcome.issueId,
+      details: {
+        previousExecutionRunId: outcome.previousExecutionRunId,
+        previousExecutionAgentNameKey: outcome.previousExecutionAgentNameKey,
+        runStatus: outcome.runStatus,
+        runAgentId: outcome.runAgentId,
+        runWasActive: outcome.runWasActive,
+        reasonNote,
+      },
+    });
+
+    res.json({
+      released: true,
+      previousExecutionRunId: outcome.previousExecutionRunId,
+      runStatus: outcome.runStatus,
+      runWasActive: outcome.runWasActive,
+    });
   });
 
   router.get("/issues/:id/comments", async (req, res) => {
