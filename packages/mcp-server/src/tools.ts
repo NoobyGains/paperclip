@@ -726,6 +726,96 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
         diagnoseCompany(client, { companyId, approvalAgeWarnHours }),
     ),
     makeTool(
+      "paperclipSetup",
+      "Validate the current MCP configuration and emit a ready-to-paste .mcp.json snippet. Pings /health, resolves identity via /api/agents/me, and compares the server's feature manifest with this MCP package's expectations. Call this first when the board user says 'help me set paperclip up'.",
+      z.object({
+        mcpServerName: z.string().min(1).max(80).optional().default("paperclip"),
+      }),
+      async ({ mcpServerName }) => {
+        const healthRaw = await safeGet<Record<string, unknown>>(client, "/health");
+        const identityRaw = await safeGet<Record<string, unknown>>(client, "/agents/me");
+        const manifestRaw = await safeGet<Record<string, unknown>>(client, "/mcp/manifest");
+
+        const defaults = client.defaults;
+        const identityCompanyId =
+          identityRaw && typeof identityRaw.companyId === "string"
+            ? (identityRaw.companyId as string)
+            : null;
+        const identityAgentId =
+          identityRaw && typeof identityRaw.id === "string"
+            ? (identityRaw.id as string)
+            : null;
+
+        const issues: string[] = [];
+        if (!healthRaw) {
+          issues.push(
+            "Could not reach the Paperclip server on /health. Check PAPERCLIP_API_URL and that the server is running.",
+          );
+        }
+        if (!identityRaw) {
+          issues.push(
+            "Could not authenticate as an agent on /api/agents/me. Check PAPERCLIP_API_KEY.",
+          );
+        }
+        if (!manifestRaw) {
+          issues.push(
+            "Server did not expose /api/mcp/manifest. This paperclip build may predate MCP manifest support; MCP tools still work, but drift cannot be detected.",
+          );
+        }
+
+        const effectiveCompanyId = defaults.companyId ?? identityCompanyId;
+        const effectiveAgentId = defaults.agentId ?? identityAgentId;
+        if (!effectiveCompanyId) {
+          issues.push(
+            "No company id could be resolved. Set PAPERCLIP_COMPANY_ID or authenticate with an agent key that implies a company.",
+          );
+        }
+
+        const mcpJsonEnv: Record<string, string> = {
+          PAPERCLIP_API_URL: (client as unknown as { config: { apiUrl: string } }).config.apiUrl
+            .replace(/\/api$/, ""),
+          PAPERCLIP_API_KEY: "<keep from current env or paste here>",
+        };
+        if (effectiveCompanyId) mcpJsonEnv.PAPERCLIP_COMPANY_ID = effectiveCompanyId;
+        if (effectiveAgentId) mcpJsonEnv.PAPERCLIP_AGENT_ID = effectiveAgentId;
+
+        const mcpJsonSnippet = {
+          mcpServers: {
+            [mcpServerName]: {
+              command: "npx",
+              args: ["-y", "@paperclipai/mcp-server"],
+              env: mcpJsonEnv,
+            },
+          },
+        };
+
+        return {
+          status: issues.length === 0 ? "ready" : "needs_attention",
+          issues,
+          health: healthRaw,
+          identity: identityRaw
+            ? {
+                id: identityRaw.id,
+                name: identityRaw.name,
+                role: identityRaw.role,
+                companyId: identityCompanyId,
+              }
+            : null,
+          manifest: manifestRaw,
+          resolved: {
+            companyId: effectiveCompanyId,
+            agentId: effectiveAgentId,
+          },
+          mcpJsonSnippet,
+          instructions: [
+            "Copy the mcpJsonSnippet into your ~/.claude/config/.mcp.json (or the nearest ancestor) under mcpServers.",
+            "Replace the PAPERCLIP_API_KEY placeholder with the actual key you used to authenticate this MCP session.",
+            "Restart Claude Code (or your MCP client) so it picks up the new server.",
+          ],
+        };
+      },
+    ),
+    makeTool(
       "paperclipApiRequest",
       "Make a JSON request to an existing Paperclip /api endpoint for unsupported operations",
       apiRequestSchema,

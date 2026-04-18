@@ -28,6 +28,31 @@ pnpm --filter @paperclipai/mcp-server build
 node packages/mcp-server/dist/stdio.js
 ```
 
+### First-time setup (`--setup`)
+
+Skip the manual env-var dance. Run:
+
+```sh
+npx -y @paperclipai/mcp-server --setup http://localhost:3100
+```
+
+(replace the URL with your paperclip server's base URL). The CLI opens a
+browser to the board approval page, waits for you to approve, resolves your
+company context, and prints a ready-to-paste `.mcp.json` block. Paste it
+into your MCP client config and restart.
+
+Flags:
+
+- `--company <id>` — lock the generated config to a specific company (useful
+  if your board key has access to multiple).
+- `--no-browser` — print the approval URL without opening a browser (useful
+  over SSH).
+
+If you already have an API key and just want to double-check your config
+from inside an existing MCP session, invoke the `paperclipSetup` tool — it
+validates the current connection and emits the same `.mcp.json` snippet
+without going through the browser.
+
 ## Tool Surface
 
 Read tools:
