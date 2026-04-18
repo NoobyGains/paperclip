@@ -2,7 +2,9 @@
 
 **Date:** 2026-04-18
 **Status:** Approved (open questions listed below; first-issue implementation resolves)
-**Tracks:** GitHub initiative `initiative:self-teaching-paperclip` on NoobyGains/paperclip (11 issues — F1–F3, P1–P4, R1, O1–O2, S1)
+**Tracks:** GitHub initiative `initiative:self-teaching-paperclip` on NoobyGains/paperclip (12 issues — F1–F3, P1–P4, R1, O1–O2, S1, PL1).
+
+**2026-04-18 addendum — amplifier 13:** After the initial spec committed, the operator flagged the [awesome-paperclip](https://github.com/gsxdsm/awesome-paperclip) plugin ecosystem as an input to self-teaching. A 13th amplifier — **plugin discovery + recommendations** — was added and tracked as issue **PL1 (#28)**. v1: seeded catalog + `paperclip://plugins` resource + `paperclipListPlugins` tool; integrates into the recipe resource (P2). Dependencies: F1 (operator profile), F2 (archetype), P2 (recipe). Ships alongside or after P2.
 **Related specs:**
 - `docs/superpowers/specs/2026-04-18-agent-intelligence-design.md` (issue #14 — the brain / hiring profiles / capabilities)
 - `docs/superpowers/specs/2026-04-18-adapter-defaults-and-review-design.md` (issues #6/#7 — defaultHireAdapter + auto-review)

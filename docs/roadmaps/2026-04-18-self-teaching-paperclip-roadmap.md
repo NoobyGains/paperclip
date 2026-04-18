@@ -4,7 +4,9 @@
 **Initiative label:** `initiative:self-teaching-paperclip`
 **Spec:** [`docs/superpowers/specs/2026-04-18-self-teaching-paperclip-design.md`](../superpowers/specs/2026-04-18-self-teaching-paperclip-design.md)
 **Repo:** `NoobyGains/paperclip`
-**Issue count:** 11 (F1–F3, P1–P4, R1, O1–O2, S1)
+**Issue count:** 12 (F1–F3, P1–P4, R1, O1–O2, S1, PL1)
+
+**2026-04-18 addendum:** **PL1 (#28) — plugin discovery + recommendations.** Added after the operator flagged the [awesome-paperclip](https://github.com/gsxdsm/awesome-paperclip) ecosystem. Sits in Phase 3 alongside O1/O2 (it wants F1 + F2 + P2 landed first). Adds ~1 day to the roadmap. See spec addendum and issue body for details.
 
 ## Phase overview
 
