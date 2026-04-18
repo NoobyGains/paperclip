@@ -1072,6 +1072,7 @@ export async function runChildProcess(
     onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
     onLogError?: (err: unknown, runId: string, message: string) => void;
     onSpawn?: (meta: { pid: number; processGroupId: number | null; startedAt: string }) => Promise<void>;
+    onStdinWritten?: (meta: { stdinWriteAt: string }) => void;
     stdin?: string;
   },
 ): Promise<RunProcessResult> {
@@ -1176,6 +1177,7 @@ export async function runChildProcess(
             } else {
               stdin.write(opts.stdin as string);
               stdin.end();
+              opts.onStdinWritten?.({ stdinWriteAt: new Date().toISOString() });
             }
           }
         }
