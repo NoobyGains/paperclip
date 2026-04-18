@@ -1,3 +1,5 @@
+import type { AdapterModel } from "@paperclipai/adapter-utils";
+
 export const type = "codex_local";
 export const label = "Codex (local)";
 export const DEFAULT_CODEX_LOCAL_MODEL = "gpt-5.3-codex";
@@ -11,17 +13,72 @@ export function isCodexLocalFastModeSupported(model: string | null | undefined):
   );
 }
 
-export const models = [
-  { id: "gpt-5.4", label: "gpt-5.4" },
-  { id: DEFAULT_CODEX_LOCAL_MODEL, label: DEFAULT_CODEX_LOCAL_MODEL },
-  { id: "gpt-5.3-codex-spark", label: "gpt-5.3-codex-spark" },
-  { id: "gpt-5", label: "gpt-5" },
-  { id: "o3", label: "o3" },
-  { id: "o4-mini", label: "o4-mini" },
-  { id: "gpt-5-mini", label: "gpt-5-mini" },
-  { id: "gpt-5-nano", label: "gpt-5-nano" },
-  { id: "o3-mini", label: "o3-mini" },
-  { id: "codex-mini-latest", label: "Codex Mini" },
+export const models: AdapterModel[] = [
+  {
+    id: "gpt-5.4",
+    label: "gpt-5.4",
+    tier: "fast",
+    recommendedFor: ["coding", "reasoning"],
+    contextWindow: 400_000,
+    notes: "Supports Codex Fast mode. Use for coding-heavy profile.",
+  },
+  {
+    id: DEFAULT_CODEX_LOCAL_MODEL,
+    label: DEFAULT_CODEX_LOCAL_MODEL,
+    tier: "standard",
+    recommendedFor: ["coding"],
+    contextWindow: 400_000,
+    notes: "Default — coding-standard profile.",
+  },
+  {
+    id: "gpt-5.3-codex-spark",
+    label: "gpt-5.3-codex-spark",
+    tier: "standard",
+    recommendedFor: ["coding"],
+  },
+  {
+    id: "gpt-5",
+    label: "gpt-5",
+    tier: "standard",
+    recommendedFor: ["coding", "reasoning"],
+  },
+  {
+    id: "o3",
+    label: "o3",
+    tier: "thinking",
+    recommendedFor: ["reasoning", "research"],
+  },
+  {
+    id: "o4-mini",
+    label: "o4-mini",
+    tier: "mini",
+    recommendedFor: ["simple"],
+    notes: "Legacy default; prefer gpt-5.3-codex or gpt-5.4.",
+  },
+  {
+    id: "gpt-5-mini",
+    label: "gpt-5-mini",
+    tier: "mini",
+    recommendedFor: ["simple", "coding"],
+  },
+  {
+    id: "gpt-5-nano",
+    label: "gpt-5-nano",
+    tier: "mini",
+    recommendedFor: ["simple"],
+  },
+  {
+    id: "o3-mini",
+    label: "o3-mini",
+    tier: "mini",
+    recommendedFor: ["simple"],
+  },
+  {
+    id: "codex-mini-latest",
+    label: "Codex Mini",
+    tier: "mini",
+    recommendedFor: ["simple"],
+  },
 ];
 
 export const agentConfigurationDoc = `# codex_local agent configuration

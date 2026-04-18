@@ -124,9 +124,35 @@ export interface AdapterExecutionContext {
   authToken?: string;
 }
 
+/**
+ * Capability tier for a model. Used by the hiring playbook to match
+ * issue-complexity to model choice. Each adapter is free to pick the tier
+ * that best represents each model — the vocabulary is normalized here.
+ */
+export type AdapterModelTier = "mini" | "standard" | "thinking" | "fast";
+
+/**
+ * Task-shape recommendations for a model. The CEO consults these when
+ * picking a profile for a hire. Multiple values allowed.
+ */
+export type AdapterModelRecommendation =
+  | "simple"      // rote edits, small fixes
+  | "coding"      // bulk engineering work
+  | "reasoning"   // architecture / design / triage
+  | "research"    // multi-step investigation, citations
+  | "review";     // reviewer role, cross-adapter review
+
 export interface AdapterModel {
   id: string;
   label: string;
+  /** Capability tier. Optional for back-compat; omit on adapters that haven't been enriched yet. */
+  tier?: AdapterModelTier;
+  /** Task shapes this model is a good fit for. Optional. */
+  recommendedFor?: readonly AdapterModelRecommendation[];
+  /** Approximate context window in tokens. Optional hint. */
+  contextWindow?: number;
+  /** Free-text note shown in the UI alongside the label. */
+  notes?: string;
 }
 
 export type AdapterEnvironmentCheckLevel = "info" | "warn" | "error";

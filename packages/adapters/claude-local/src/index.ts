@@ -1,13 +1,55 @@
+import type { AdapterModel } from "@paperclipai/adapter-utils";
+
 export const type = "claude_local";
 export const label = "Claude Code (local)";
 
-export const models = [
-  { id: "claude-opus-4-7", label: "Claude Opus 4.7" },
-  { id: "claude-opus-4-6", label: "Claude Opus 4.6" },
-  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
-  { id: "claude-haiku-4-6", label: "Claude Haiku 4.6" },
-  { id: "claude-sonnet-4-5-20250929", label: "Claude Sonnet 4.5" },
-  { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+export const models: AdapterModel[] = [
+  {
+    id: "claude-opus-4-7",
+    label: "Claude Opus 4.7",
+    tier: "thinking",
+    recommendedFor: ["reasoning", "research", "review"],
+    contextWindow: 1_000_000,
+    notes: "Premium thinking model — reviewer / research / hard triage.",
+  },
+  {
+    id: "claude-opus-4-6",
+    label: "Claude Opus 4.6",
+    tier: "thinking",
+    recommendedFor: ["reasoning", "research", "review"],
+    contextWindow: 200_000,
+  },
+  {
+    id: "claude-sonnet-4-6",
+    label: "Claude Sonnet 4.6",
+    tier: "standard",
+    recommendedFor: ["reasoning", "review"],
+    contextWindow: 200_000,
+    notes: "Everyday thinking work — the default reasoning tier.",
+  },
+  {
+    id: "claude-haiku-4-6",
+    label: "Claude Haiku 4.6",
+    tier: "mini",
+    recommendedFor: ["simple"],
+    contextWindow: 200_000,
+  },
+  {
+    id: "claude-sonnet-4-5-20250929",
+    label: "Claude Sonnet 4.5",
+    tier: "standard",
+    recommendedFor: ["reasoning"],
+    contextWindow: 200_000,
+    notes: "Legacy — prefer Sonnet 4.6.",
+  },
+  {
+    id: "claude-haiku-4-5-20251001",
+    label: "Claude Haiku 4.5",
+    tier: "mini",
+    recommendedFor: ["simple"],
+    contextWindow: 200_000,
+    notes: "Legacy — prefer Haiku 4.6.",
+  },
 ];
 
 export const agentConfigurationDoc = `# claude_local agent configuration
