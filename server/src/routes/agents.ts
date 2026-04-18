@@ -12,6 +12,7 @@ import {
   createAgentHireSchema,
   createAgentSchema,
   deriveAgentUrlKey,
+  isLeadRole,
   isUuidLike,
   resetAgentSessionSchema,
   testAdapterEnvironmentSchema,
@@ -1401,7 +1402,7 @@ export function agentRoutes(db: Db) {
 
   router.post("/companies/:companyId/agent-hires", validate(createAgentHireSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
-    await assertCanCreateAgentsForCompany(req, companyId);
+    const hirerAgent = await assertCanCreateAgentsForCompany(req, companyId);
     const company = await db
       .select()
       .from(companies)
@@ -1465,6 +1466,48 @@ export function agentRoutes(db: Db) {
       adapterConfig: normalizedAdapterConfig,
       runtimeConfig: normalizeNewAgentRuntimeConfig(hireInput.runtimeConfig),
     };
+
+    // L5: auto-grant canCreateAgents for lead roles
+    if (isLeadRole(normalizedHireInput.role)) {
+      const existing = (normalizedHireInput.permissions ?? {}) as Record<string, unknown>;
+      normalizedHireInput.permissions = { ...existing, canCreateAgents: true };
+    }
+
+    // L5: non-board hirers can only hire into their own subtree
+    if (hirerAgent && normalizedHireInput.reportsTo) {
+      const proposedReportsTo = normalizedHireInput.reportsTo as string;
+      // hirer can always hire directly under themselves
+      if (proposedReportsTo !== hirerAgent.id) {
+        const allAgents = await svc.list(companyId);
+        const subtreeIds = new Set<string>();
+        const queue: string[] = [hirerAgent.id];
+        while (queue.length > 0) {
+          const current = queue.shift()!;
+          subtreeIds.add(current);
+          for (const a of allAgents) {
+            if (a.reportsTo === current) queue.push(a.id);
+          }
+        }
+        if (!subtreeIds.has(proposedReportsTo)) {
+          throw forbidden("Cannot hire outside your own reporting subtree");
+        }
+      }
+    }
+
+    // L5: new hire's budget must not exceed hirer's remaining budget
+    if (hirerAgent) {
+      const hireBudget = typeof normalizedHireInput.budgetMonthlyCents === "number"
+        ? normalizedHireInput.budgetMonthlyCents
+        : 0;
+      if (hireBudget > 0) {
+        const remaining = hirerAgent.budgetMonthlyCents - hirerAgent.spentMonthlyCents;
+        if (hireBudget > remaining) {
+          throw forbidden(
+            `New hire budget (${hireBudget} cents/month) exceeds your remaining budget (${remaining} cents/month)`,
+          );
+        }
+      }
+    }
 
     const requiresApproval = company.requireBoardApprovalForNewAgents;
     const status = requiresApproval ? "pending_approval" : "idle";
