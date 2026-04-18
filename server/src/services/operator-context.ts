@@ -24,9 +24,14 @@ const FIRST_RUN_PATH = path.resolve(
   HERE,
   "../onboarding-assets/operator-context/FIRST_RUN.md",
 );
+const HIRING_PLAYBOOK_PATH = path.resolve(
+  HERE,
+  "../onboarding-assets/ceo/HIRING_PLAYBOOK.md",
+);
 
 let narrativeCache: string | null = null;
 let firstRunCache: string | null = null;
+let hiringPlaybookCache: string | null = null;
 
 async function loadNarrative(): Promise<string> {
   if (narrativeCache !== null) return narrativeCache;
@@ -40,8 +45,18 @@ async function loadFirstRun(): Promise<string> {
   return firstRunCache;
 }
 
+async function loadHiringPlaybook(): Promise<string> {
+  if (hiringPlaybookCache !== null) return hiringPlaybookCache;
+  hiringPlaybookCache = await readFile(HIRING_PLAYBOOK_PATH, "utf8");
+  return hiringPlaybookCache;
+}
+
 export async function buildFirstRunGuide(): Promise<string> {
   return loadFirstRun();
+}
+
+export async function buildHiringPlaybook(): Promise<string> {
+  return loadHiringPlaybook();
 }
 
 function bulletList(values: readonly string[]): string {
@@ -109,4 +124,5 @@ export async function buildOperatorContext(): Promise<string> {
 export function resetOperatorContextCacheForTests(): void {
   narrativeCache = null;
   firstRunCache = null;
+  hiringPlaybookCache = null;
 }

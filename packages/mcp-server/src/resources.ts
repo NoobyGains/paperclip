@@ -114,5 +114,14 @@ export function createResourceDefinitions(
       mimeType: "text/markdown",
       read: async () => client.fetchRawText("/llms/first-run.txt"),
     },
+    {
+      name: "Hiring playbook",
+      title: "CEO hiring playbook",
+      uri: "paperclip://hiring-playbook",
+      description:
+        "The seven agent profiles the CEO picks from when hiring a specialist: coding-heavy, coding-standard, coding-light, reasoning-heavy, reasoning-standard, reviewer, research. Each profile maps to a concrete (adapter, model, reasoning effort, capabilities). Read this before proposing a hire.",
+      mimeType: "text/markdown",
+      read: async () => client.fetchRawText("/llms/hiring-playbook.txt"),
+    },
   ];
 }

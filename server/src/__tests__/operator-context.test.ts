@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildHiringPlaybook,
   buildOperatorContext,
   resetOperatorContextCacheForTests,
 } from "../services/operator-context.js";
@@ -26,5 +27,25 @@ describe("operator context stitcher", () => {
     expect(body).toContain("`succeeded`");
     expect(body).toContain("`coalesce_if_active`");
     expect(body).toContain("`skip_missed`");
+  });
+});
+
+describe("hiring playbook loader", () => {
+  it("exposes the seven agent profiles so the CEO can pick one", async () => {
+    resetOperatorContextCacheForTests();
+    const body = await buildHiringPlaybook();
+
+    expect(body).toContain("# Paperclip Hiring Playbook");
+    // Each profile must be present.
+    expect(body).toContain("### coding-heavy");
+    expect(body).toContain("### coding-standard");
+    expect(body).toContain("### coding-light");
+    expect(body).toContain("### reasoning-heavy");
+    expect(body).toContain("### reasoning-standard");
+    expect(body).toContain("### reviewer");
+    expect(body).toContain("### research");
+    // Model references are current generation.
+    expect(body).toContain("gpt-5.4");
+    expect(body).toContain("claude-opus-4-7");
   });
 });

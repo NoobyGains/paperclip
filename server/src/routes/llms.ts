@@ -4,7 +4,11 @@ import { AGENT_ICON_NAMES } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import { listServerAdapters } from "../adapters/index.js";
 import { agentService } from "../services/agents.js";
-import { buildFirstRunGuide, buildOperatorContext } from "../services/operator-context.js";
+import {
+  buildFirstRunGuide,
+  buildHiringPlaybook,
+  buildOperatorContext,
+} from "../services/operator-context.js";
 
 function hasCreatePermission(agent: { role: string; permissions: Record<string, unknown> | null | undefined }) {
   if (!agent.permissions || typeof agent.permissions !== "object") return false;
@@ -92,6 +96,12 @@ export function llmRoutes(db: Db) {
   router.get("/llms/first-run.txt", async (req, res) => {
     await assertCanRead(req);
     const body = await buildFirstRunGuide();
+    res.type("text/plain").send(body);
+  });
+
+  router.get("/llms/hiring-playbook.txt", async (req, res) => {
+    await assertCanRead(req);
+    const body = await buildHiringPlaybook();
     res.type("text/plain").send(body);
   });
 
