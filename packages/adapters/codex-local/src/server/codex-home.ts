@@ -7,6 +7,8 @@ const TRUTHY_ENV_RE = /^(1|true|yes|on)$/i;
 const COPIED_SHARED_FILES = ["config.json", "config.toml", "instructions.md"] as const;
 const SYMLINKED_SHARED_FILES = ["auth.json"] as const;
 const DEFAULT_PAPERCLIP_INSTANCE_ID = "default";
+const SANDBOX_WORKSPACE_WRITE_SECTION = "sandbox_workspace_write";
+const SANDBOX_WORKSPACE_WRITE_NETWORK_ACCESS_LINE = "network_access = true";
 
 function nonEmpty(value: string | undefined): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -71,6 +73,53 @@ async function ensureCopiedFile(target: string, source: string): Promise<void> {
   await fs.copyFile(source, target);
 }
 
+function upsertWorkspaceWriteNetworkAccessToml(content: string): string {
+  const normalized = content.replace(/\r\n/g, "\n");
+  const lines = normalized.length > 0 ? normalized.split("\n") : [];
+  const sectionHeader = `[${SANDBOX_WORKSPACE_WRITE_SECTION}]`;
+  const sectionIndex = lines.findIndex((line) => line.trim() === sectionHeader);
+
+  if (sectionIndex >= 0) {
+    let nextSectionIndex = lines.length;
+    for (let index = sectionIndex + 1; index < lines.length; index += 1) {
+      if (/^\s*\[.+\]\s*$/.test(lines[index] ?? "")) {
+        nextSectionIndex = index;
+        break;
+      }
+    }
+
+    const networkAccessIndex = lines.findIndex(
+      (line, index) =>
+        index > sectionIndex
+        && index < nextSectionIndex
+        && /^\s*network_access\s*=/.test(line),
+    );
+
+    if (networkAccessIndex >= 0) {
+      lines[networkAccessIndex] = SANDBOX_WORKSPACE_WRITE_NETWORK_ACCESS_LINE;
+    } else {
+      lines.splice(sectionIndex + 1, 0, SANDBOX_WORKSPACE_WRITE_NETWORK_ACCESS_LINE);
+    }
+  } else {
+    if (lines.length > 0 && lines[lines.length - 1] !== "") {
+      lines.push("");
+    }
+    lines.push(sectionHeader, SANDBOX_WORKSPACE_WRITE_NETWORK_ACCESS_LINE);
+  }
+
+  const next = lines.join("\n");
+  return next.endsWith("\n") ? next : `${next}\n`;
+}
+
+async function ensureWorkspaceWriteNetworkAccessConfig(targetHome: string): Promise<void> {
+  const targetConfigPath = path.join(targetHome, "config.toml");
+  const existingConfig = await fs.readFile(targetConfigPath, "utf8").catch(() => "");
+  const nextConfig = upsertWorkspaceWriteNetworkAccessToml(existingConfig);
+  if (nextConfig === existingConfig) return;
+  await ensureParentDir(targetConfigPath);
+  await fs.writeFile(targetConfigPath, nextConfig, "utf8");
+}
+
 export async function prepareManagedCodexHome(
   env: NodeJS.ProcessEnv,
   onLog: AdapterExecutionContext["onLog"],
@@ -94,6 +143,8 @@ export async function prepareManagedCodexHome(
     if (!(await pathExists(source))) continue;
     await ensureCopiedFile(path.join(targetHome, name), source);
   }
+
+  await ensureWorkspaceWriteNetworkAccessConfig(targetHome);
 
   await onLog(
     "stdout",

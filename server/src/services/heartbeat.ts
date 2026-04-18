@@ -401,6 +401,18 @@ const heartbeatRunListColumns = {
   updatedAt: heartbeatRuns.updatedAt,
 } as const;
 
+function utf8SafeText(expression: unknown) {
+  return sql<string | null>`convert_from(convert_to(${expression}, 'SQL_ASCII'), 'UTF8')`;
+}
+
+function utf8SafeTruncate(expression: unknown, maxChars: number) {
+  return sql<string | null>`left(${utf8SafeText(expression)}, ${maxChars})`;
+}
+
+function utf8SafeCharLength(expression: unknown) {
+  return sql<number | null>`char_length(${utf8SafeText(expression)})`;
+}
+
 const heartbeatRunListContextColumns = {
   contextIssueId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`.as("contextIssueId"),
   contextTaskId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'taskId'`.as("contextTaskId"),
@@ -413,10 +425,22 @@ const heartbeatRunListContextColumns = {
 } as const;
 
 const heartbeatRunListResultColumns = {
-  resultSummary: sql<string | null>`left(${heartbeatRuns.resultJson} ->> 'summary', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS})`.as("resultSummary"),
-  resultResult: sql<string | null>`left(${heartbeatRuns.resultJson} ->> 'result', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS})`.as("resultResult"),
-  resultMessage: sql<string | null>`left(${heartbeatRuns.resultJson} ->> 'message', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS})`.as("resultMessage"),
-  resultError: sql<string | null>`left(${heartbeatRuns.resultJson} ->> 'error', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS})`.as("resultError"),
+  resultSummary: utf8SafeTruncate(
+    sql`${heartbeatRuns.resultJson} ->> 'summary'`,
+    HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS,
+  ).as("resultSummary"),
+  resultResult: utf8SafeTruncate(
+    sql`${heartbeatRuns.resultJson} ->> 'result'`,
+    HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS,
+  ).as("resultResult"),
+  resultMessage: utf8SafeTruncate(
+    sql`${heartbeatRuns.resultJson} ->> 'message'`,
+    HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS,
+  ).as("resultMessage"),
+  resultError: utf8SafeTruncate(
+    sql`${heartbeatRuns.resultJson} ->> 'error'`,
+    HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS,
+  ).as("resultError"),
   resultTotalCostUsd: sql<string | null>`${heartbeatRuns.resultJson} ->> 'total_cost_usd'`.as("resultTotalCostUsd"),
   resultCostUsd: sql<string | null>`${heartbeatRuns.resultJson} ->> 'cost_usd'`.as("resultCostUsd"),
   resultCostUsdCamel: sql<string | null>`${heartbeatRuns.resultJson} ->> 'costUsd'`.as("resultCostUsdCamel"),
@@ -429,19 +453,19 @@ const heartbeatRunSafeResultJsonColumn = sql<Record<string, unknown> | null>`
       then ${heartbeatRuns.resultJson}
     else jsonb_strip_nulls(
       jsonb_build_object(
-        'summary', left(${heartbeatRuns.resultJson} ->> 'summary', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS}),
-        'result', left(${heartbeatRuns.resultJson} ->> 'result', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS}),
-        'message', left(${heartbeatRuns.resultJson} ->> 'message', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS}),
-        'error', left(${heartbeatRuns.resultJson} ->> 'error', ${HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS}),
-        'stdout', left(${heartbeatRuns.resultJson} ->> 'stdout', ${HEARTBEAT_RUN_RESULT_OUTPUT_MAX_CHARS}),
-        'stderr', left(${heartbeatRuns.resultJson} ->> 'stderr', ${HEARTBEAT_RUN_RESULT_OUTPUT_MAX_CHARS}),
+        'summary', ${utf8SafeTruncate(sql`${heartbeatRuns.resultJson} ->> 'summary'`, HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS)},
+        'result', ${utf8SafeTruncate(sql`${heartbeatRuns.resultJson} ->> 'result'`, HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS)},
+        'message', ${utf8SafeTruncate(sql`${heartbeatRuns.resultJson} ->> 'message'`, HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS)},
+        'error', ${utf8SafeTruncate(sql`${heartbeatRuns.resultJson} ->> 'error'`, HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS)},
+        'stdout', ${utf8SafeTruncate(sql`${heartbeatRuns.resultJson} ->> 'stdout'`, HEARTBEAT_RUN_RESULT_OUTPUT_MAX_CHARS)},
+        'stderr', ${utf8SafeTruncate(sql`${heartbeatRuns.resultJson} ->> 'stderr'`, HEARTBEAT_RUN_RESULT_OUTPUT_MAX_CHARS)},
         'stdoutTruncated', case
-          when length(${heartbeatRuns.resultJson} ->> 'stdout') > ${HEARTBEAT_RUN_RESULT_OUTPUT_MAX_CHARS}
+          when ${utf8SafeCharLength(sql`${heartbeatRuns.resultJson} ->> 'stdout'`)} > ${HEARTBEAT_RUN_RESULT_OUTPUT_MAX_CHARS}
             then to_jsonb(true)
           else null
         end,
         'stderrTruncated', case
-          when length(${heartbeatRuns.resultJson} ->> 'stderr') > ${HEARTBEAT_RUN_RESULT_OUTPUT_MAX_CHARS}
+          when ${utf8SafeCharLength(sql`${heartbeatRuns.resultJson} ->> 'stderr'`)} > ${HEARTBEAT_RUN_RESULT_OUTPUT_MAX_CHARS}
             then to_jsonb(true)
           else null
         end,

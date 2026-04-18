@@ -44,7 +44,7 @@ import {
   syncInstructionsBundleConfigFromFilePath,
   workspaceOperationService,
 } from "../services/index.js";
-import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
+import { conflict, forbidden, notFound, unauthorized, unprocessable } from "../errors.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import {
   assertNoAgentHostWorkspaceCommandMutation,
@@ -414,6 +414,12 @@ export function agentRoutes(db: Db) {
 
   async function normalizeAgentReference(req: Request, rawId: string): Promise<string> {
     const raw = rawId.trim();
+    if (raw === "me") {
+      if (req.actor.type !== "agent" || !req.actor.agentId) {
+        throw unauthorized("Agent authentication required");
+      }
+      return req.actor.agentId;
+    }
     if (isUuidLike(raw)) return raw;
 
     const companyId = await resolveCompanyIdForAgentReference(req);
