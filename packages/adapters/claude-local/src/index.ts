@@ -2,6 +2,7 @@ import type { AdapterModel } from "@paperclipai/adapter-utils";
 
 export const type = "claude_local";
 export const label = "Claude Code (local)";
+export const billingMode = "subscription" as const;
 
 export const models: AdapterModel[] = [
   {

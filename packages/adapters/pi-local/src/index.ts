@@ -2,6 +2,7 @@ import type { AdapterModel } from "@paperclipai/adapter-utils";
 
 export const type = "pi_local";
 export const label = "Pi (local)";
+export const billingMode = "subscription" as const;
 
 // Pi discovers available models dynamically at runtime via `pi --list-models`.
 // This empty static list is a placeholder — the actual options are enumerated

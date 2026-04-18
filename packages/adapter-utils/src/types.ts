@@ -385,6 +385,20 @@ export interface ServerAdapterModule {
    * rather than reading config.paperclipRuntimeSkills.
    */
   requiresMaterializedRuntimeSkills?: boolean;
+
+  /**
+   * Billing mode for this adapter.
+   *
+   * - "subscription": backed by the user's local subscription (Claude Max, Codex Max, Cursor, …).
+   *   No per-token API charges. Safe to use when subscriptionOnly=true.
+   * - "api": billed against an API key / provider account per call. Blocked when subscriptionOnly=true.
+   * - "hybrid": the remote manages its own billing (e.g. openclaw_gateway may use either mode
+   *   depending on how the remote is configured). Treated as allowed under subscriptionOnly
+   *   because the operator has explicit knowledge of the remote's billing arrangement.
+   *
+   * When undefined, the enforcement middleware treats the adapter as "api" (safest default).
+   */
+  billingMode?: "subscription" | "api" | "hybrid";
 }
 
 // ---------------------------------------------------------------------------

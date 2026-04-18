@@ -9,7 +9,7 @@ import {
   sessionCodec as claudeSessionCodec,
   getQuotaWindows as claudeGetQuotaWindows,
 } from "@paperclipai/adapter-claude-local/server";
-import { agentConfigurationDoc as claudeAgentConfigurationDoc, models as claudeModels } from "@paperclipai/adapter-claude-local";
+import { agentConfigurationDoc as claudeAgentConfigurationDoc, models as claudeModels, billingMode as claudeBillingMode } from "@paperclipai/adapter-claude-local";
 import {
   execute as codexExecute,
   listCodexSkills,
@@ -18,7 +18,7 @@ import {
   sessionCodec as codexSessionCodec,
   getQuotaWindows as codexGetQuotaWindows,
 } from "@paperclipai/adapter-codex-local/server";
-import { agentConfigurationDoc as codexAgentConfigurationDoc, models as codexModels } from "@paperclipai/adapter-codex-local";
+import { agentConfigurationDoc as codexAgentConfigurationDoc, models as codexModels, billingMode as codexBillingMode } from "@paperclipai/adapter-codex-local";
 import {
   execute as cursorExecute,
   listCursorSkills,
@@ -26,7 +26,7 @@ import {
   testEnvironment as cursorTestEnvironment,
   sessionCodec as cursorSessionCodec,
 } from "@paperclipai/adapter-cursor-local/server";
-import { agentConfigurationDoc as cursorAgentConfigurationDoc, models as cursorModels } from "@paperclipai/adapter-cursor-local";
+import { agentConfigurationDoc as cursorAgentConfigurationDoc, models as cursorModels, billingMode as cursorBillingMode } from "@paperclipai/adapter-cursor-local";
 import {
   execute as geminiExecute,
   listGeminiSkills,
@@ -34,7 +34,7 @@ import {
   testEnvironment as geminiTestEnvironment,
   sessionCodec as geminiSessionCodec,
 } from "@paperclipai/adapter-gemini-local/server";
-import { agentConfigurationDoc as geminiAgentConfigurationDoc, models as geminiModels } from "@paperclipai/adapter-gemini-local";
+import { agentConfigurationDoc as geminiAgentConfigurationDoc, models as geminiModels, billingMode as geminiBillingMode } from "@paperclipai/adapter-gemini-local";
 import {
   execute as openCodeExecute,
   listOpenCodeSkills,
@@ -46,6 +46,7 @@ import {
 import {
   agentConfigurationDoc as openCodeAgentConfigurationDoc,
   models as openCodeModels,
+  billingMode as openCodeBillingMode,
 } from "@paperclipai/adapter-opencode-local";
 import {
   execute as openclawGatewayExecute,
@@ -54,6 +55,7 @@ import {
 import {
   agentConfigurationDoc as openclawGatewayAgentConfigurationDoc,
   models as openclawGatewayModels,
+  billingMode as openclawGatewayBillingMode,
 } from "@paperclipai/adapter-openclaw-gateway";
 import { listCodexModels } from "./codex-models.js";
 import { listCursorModels } from "./cursor-models.js";
@@ -67,6 +69,7 @@ import {
 } from "@paperclipai/adapter-pi-local/server";
 import {
   agentConfigurationDoc as piAgentConfigurationDoc,
+  billingMode as piBillingMode,
 } from "@paperclipai/adapter-pi-local";
 import {
   execute as hermesExecute,
@@ -102,6 +105,7 @@ const claudeLocalAdapter: ServerAdapterModule = {
   requiresMaterializedRuntimeSkills: false,
   agentConfigurationDoc: claudeAgentConfigurationDoc,
   getQuotaWindows: claudeGetQuotaWindows,
+  billingMode: claudeBillingMode,
 };
 
 const codexLocalAdapter: ServerAdapterModule = {
@@ -120,6 +124,7 @@ const codexLocalAdapter: ServerAdapterModule = {
   requiresMaterializedRuntimeSkills: false,
   agentConfigurationDoc: codexAgentConfigurationDoc,
   getQuotaWindows: codexGetQuotaWindows,
+  billingMode: codexBillingMode,
 };
 
 const cursorLocalAdapter: ServerAdapterModule = {
@@ -137,6 +142,7 @@ const cursorLocalAdapter: ServerAdapterModule = {
   instructionsPathKey: "instructionsFilePath",
   requiresMaterializedRuntimeSkills: true,
   agentConfigurationDoc: cursorAgentConfigurationDoc,
+  billingMode: cursorBillingMode,
 };
 
 const geminiLocalAdapter: ServerAdapterModule = {
@@ -153,6 +159,7 @@ const geminiLocalAdapter: ServerAdapterModule = {
   instructionsPathKey: "instructionsFilePath",
   requiresMaterializedRuntimeSkills: true,
   agentConfigurationDoc: geminiAgentConfigurationDoc,
+  billingMode: geminiBillingMode,
 };
 
 const openclawGatewayAdapter: ServerAdapterModule = {
@@ -164,6 +171,7 @@ const openclawGatewayAdapter: ServerAdapterModule = {
   supportsInstructionsBundle: false,
   requiresMaterializedRuntimeSkills: false,
   agentConfigurationDoc: openclawGatewayAgentConfigurationDoc,
+  billingMode: openclawGatewayBillingMode,
 };
 
 const openCodeLocalAdapter: ServerAdapterModule = {
@@ -181,6 +189,7 @@ const openCodeLocalAdapter: ServerAdapterModule = {
   instructionsPathKey: "instructionsFilePath",
   requiresMaterializedRuntimeSkills: true,
   agentConfigurationDoc: openCodeAgentConfigurationDoc,
+  billingMode: openCodeBillingMode,
 };
 
 const piLocalAdapter: ServerAdapterModule = {
@@ -198,6 +207,7 @@ const piLocalAdapter: ServerAdapterModule = {
   instructionsPathKey: "instructionsFilePath",
   requiresMaterializedRuntimeSkills: true,
   agentConfigurationDoc: piAgentConfigurationDoc,
+  billingMode: piBillingMode,
 };
 
 const hermesLocalAdapter: ServerAdapterModule = {

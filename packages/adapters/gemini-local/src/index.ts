@@ -2,6 +2,7 @@ import type { AdapterModel } from "@paperclipai/adapter-utils";
 
 export const type = "gemini_local";
 export const label = "Gemini CLI (local)";
+export const billingMode = "subscription" as const;
 export const DEFAULT_GEMINI_LOCAL_MODEL = "auto";
 
 export const models: AdapterModel[] = [

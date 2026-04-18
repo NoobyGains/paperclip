@@ -46,6 +46,7 @@ import {
   secretService,
   syncInstructionsBundleConfigFromFilePath,
   workspaceOperationService,
+  userProfileService,
 } from "../services/index.js";
 import { badRequest, conflict, forbidden, notFound, unauthorized, unprocessable } from "../errors.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
@@ -58,6 +59,7 @@ import {
   findActiveServerAdapter,
   findServerAdapter,
   listAdapterModels,
+  listEnabledServerAdapters,
   requireServerAdapter,
 } from "../adapters/index.js";
 import { redactEventPayload } from "../redaction.js";
@@ -135,6 +137,7 @@ export function agentRoutes(db: Db) {
   const companySkills = companySkillService(db);
   const workspaceOperations = workspaceOperationService(db);
   const instanceSettings = instanceSettingsService(db);
+  const userProfiles = userProfileService(db);
   const strictSecretsMode = process.env.PAPERCLIP_SECRETS_STRICT_MODE === "true";
 
   async function getCurrentUserRedactionOptions() {
@@ -1441,6 +1444,31 @@ export function agentRoutes(db: Db) {
       requestedAdapterType: hireInput.adapterType,
       defaultHireAdapter: company.defaultHireAdapter,
     });
+
+    // P1: subscription-only enforcement — board users only (agents have no profile).
+    if (req.actor.type === "board" && req.actor.userId) {
+      const profile = await userProfiles.getProfile(req.actor.userId);
+      if (profile.subscriptionOnly) {
+        const adapterModule = findActiveServerAdapter(hireInput.adapterType);
+        // Treat undefined billingMode as "api" — safest default.
+        const billingMode = adapterModule?.billingMode ?? "api";
+        if (billingMode === "api") {
+          // Build the list of allowed adapter types (subscription + hybrid).
+          const allowed = listEnabledServerAdapters()
+            .filter((a) => a.billingMode === "subscription" || a.billingMode === "hybrid")
+            .map((a) => a.type);
+          res.status(403).json({
+            code: "subscription_only_violation",
+            error:
+              "That hire would use API billing. You are on subscription-only mode — pick a Codex (Max) or Claude (Max) agent instead.",
+            adapter: hireInput.adapterType,
+            allowed,
+          });
+          return;
+        }
+      }
+    }
+
     assertNoAgentHostWorkspaceCommandMutation(
       req,
       collectAgentAdapterWorkspaceCommandPaths(hireInput.adapterConfig),
