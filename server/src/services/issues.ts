@@ -2036,6 +2036,132 @@ export function issueService(db: Db) {
       return enriched;
     },
 
+    /**
+     * Recovery helper for stale issue execution locks.
+     *
+     * If `issues.executionRunId` points at a heartbeat run that no longer
+     * exists or has reached a terminal status (succeeded, failed, cancelled,
+     * timed_out), clear the execution lock fields so a fresh run can claim
+     * the issue. Locks backed by a still-queued or still-running run are
+     * left untouched so active work is never preempted.
+     *
+     * Wrapped in a transaction with SELECT FOR UPDATE so the read + clear
+     * are atomic, matching the checkout() staleness pre-check.
+     */
+    releaseStaleExecutionLock: async (id: string) => {
+      const now = new Date();
+      return db.transaction(async (tx) => {
+        await tx.execute(sql`select id from issues where id = ${id} for update`);
+        const row = await tx
+          .select({
+            id: issues.id,
+            companyId: issues.companyId,
+            executionRunId: issues.executionRunId,
+            executionAgentNameKey: issues.executionAgentNameKey,
+            executionLockedAt: issues.executionLockedAt,
+          })
+          .from(issues)
+          .where(eq(issues.id, id))
+          .then((rows) => rows[0] ?? null);
+        if (!row) return { status: "not_found" as const };
+        if (!row.executionRunId) {
+          return { status: "no_lock" as const, issueId: row.id, companyId: row.companyId };
+        }
+        const lockRun = await tx
+          .select({ id: heartbeatRuns.id, status: heartbeatRuns.status, agentId: heartbeatRuns.agentId })
+          .from(heartbeatRuns)
+          .where(eq(heartbeatRuns.id, row.executionRunId))
+          .then((rows) => rows[0] ?? null);
+        const runMissing = !lockRun;
+        const runTerminal = lockRun ? TERMINAL_HEARTBEAT_RUN_STATUSES.has(lockRun.status) : false;
+        if (!runMissing && !runTerminal) {
+          return {
+            status: "active" as const,
+            issueId: row.id,
+            companyId: row.companyId,
+            executionRunId: row.executionRunId,
+            runStatus: lockRun.status,
+            runAgentId: lockRun.agentId,
+          };
+        }
+        await tx
+          .update(issues)
+          .set({
+            executionRunId: null,
+            executionAgentNameKey: null,
+            executionLockedAt: null,
+            updatedAt: now,
+          })
+          .where(and(eq(issues.id, id), eq(issues.executionRunId, row.executionRunId)));
+        return {
+          status: "released" as const,
+          issueId: row.id,
+          companyId: row.companyId,
+          previousExecutionRunId: row.executionRunId,
+          previousExecutionAgentNameKey: row.executionAgentNameKey,
+          previousExecutionLockedAt: row.executionLockedAt,
+          runStatus: lockRun?.status ?? null,
+          runAgentId: lockRun?.agentId ?? null,
+          reason: runMissing ? ("run_missing" as const) : ("run_terminal" as const),
+        };
+      });
+    },
+
+    /**
+     * Admin recovery helper — unconditionally clears the execution lock on
+     * an issue regardless of the referenced run's status. Intended for the
+     * board-gated force-release endpoint when an operator has determined
+     * the lock is wedging work. Callers are responsible for permission
+     * checks and audit logging; this function only mutates the row and
+     * reports what was cleared.
+     */
+    forceReleaseExecutionLock: async (id: string) => {
+      const now = new Date();
+      return db.transaction(async (tx) => {
+        await tx.execute(sql`select id from issues where id = ${id} for update`);
+        const row = await tx
+          .select({
+            id: issues.id,
+            companyId: issues.companyId,
+            executionRunId: issues.executionRunId,
+            executionAgentNameKey: issues.executionAgentNameKey,
+            executionLockedAt: issues.executionLockedAt,
+          })
+          .from(issues)
+          .where(eq(issues.id, id))
+          .then((rows) => rows[0] ?? null);
+        if (!row) return { status: "not_found" as const };
+        if (!row.executionRunId) {
+          return { status: "no_lock" as const, issueId: row.id, companyId: row.companyId };
+        }
+        const lockRun = await tx
+          .select({ id: heartbeatRuns.id, status: heartbeatRuns.status, agentId: heartbeatRuns.agentId })
+          .from(heartbeatRuns)
+          .where(eq(heartbeatRuns.id, row.executionRunId))
+          .then((rows) => rows[0] ?? null);
+        await tx
+          .update(issues)
+          .set({
+            executionRunId: null,
+            executionAgentNameKey: null,
+            executionLockedAt: null,
+            updatedAt: now,
+          })
+          .where(and(eq(issues.id, id), eq(issues.executionRunId, row.executionRunId)));
+        return {
+          status: "released" as const,
+          issueId: row.id,
+          companyId: row.companyId,
+          previousExecutionRunId: row.executionRunId,
+          previousExecutionAgentNameKey: row.executionAgentNameKey,
+          previousExecutionLockedAt: row.executionLockedAt,
+          runStatus: lockRun?.status ?? null,
+          runAgentId: lockRun?.agentId ?? null,
+          runWasActive: Boolean(lockRun && !TERMINAL_HEARTBEAT_RUN_STATUSES.has(lockRun.status)),
+        };
+      });
+    },
+
     listLabels: (companyId: string) =>
       db.select().from(labels).where(eq(labels.companyId, companyId)).orderBy(asc(labels.name), asc(labels.id)),
 
