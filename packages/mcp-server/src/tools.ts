@@ -17,6 +17,7 @@ import {
   upsertIssueDocumentSchema,
   linkIssueApprovalSchema,
   companyPortabilityImportSchema,
+  updateUserProfileSchema,
 } from "@paperclipai/shared";
 import { PaperclipApiClient } from "./client.js";
 import {
@@ -232,6 +233,8 @@ const bootstrapAppSchema = z.object({
 const TOOL_ANNOTATIONS: Record<string, PaperclipToolAnnotations> = {
   // Read-only / diagnostic tools
   paperclipMe: { ...READ_ONLY, title: "Current actor" },
+  paperclipGetMyProfile: { ...READ_ONLY, title: "Operator profile" },
+  paperclipUpdateMyProfile: { ...SAFE_WRITE, title: "Update operator profile" },
   paperclipInboxLite: { ...READ_ONLY, title: "Agent inbox (lite)" },
   paperclipListAgents: { ...READ_ONLY, title: "List agents" },
   paperclipGetAgent: { ...READ_ONLY, title: "Get agent" },
@@ -320,6 +323,18 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
       "Get the current authenticated Paperclip actor details",
       z.object({}),
       async () => client.requestJson("GET", "/agents/me"),
+    ),
+    makeTool(
+      "paperclipGetMyProfile",
+      "Return the operator's profile (subscription declarations + preferences). Every caller operating as a board user has one — auto-created with safe defaults (subscriptionOnly=true) on first access.",
+      z.object({}),
+      async () => client.getMyProfile(),
+    ),
+    makeTool(
+      "paperclipUpdateMyProfile",
+      "Update the operator's profile. Pass any subset of { subscriptionOnly, claudeSubscription, codexSubscription, preferences }. Subscription plans: max, pro, plus, api, none. Set a subscription field to null to clear it.",
+      updateUserProfileSchema,
+      async (input) => client.updateMyProfile(input),
     ),
     makeTool(
       "paperclipInboxLite",

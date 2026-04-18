@@ -136,4 +136,12 @@ export class PaperclipApiClient {
 
     return parsedBody as T;
   }
+
+  async getMyProfile(): Promise<Record<string, unknown>> {
+    return this.requestJson("GET", "/me/profile");
+  }
+
+  async updateMyProfile(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.requestJson("PATCH", "/me/profile", { body });
+  }
 }

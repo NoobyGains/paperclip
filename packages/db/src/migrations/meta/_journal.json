@@ -442,6 +442,13 @@
       "when": 1745020800000,
       "tag": "0062_process_lost_telemetry",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1776700000000,
+      "tag": "0063_user_profiles",
+      "breakpoints": true
     }
   ]
 }

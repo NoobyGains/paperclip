@@ -436,6 +436,52 @@ describe("paperclip MCP tools", () => {
     expect(calls[3]?.url).toContain("/api/companies/c-1/projects");
   });
 
+  describe("operator profile tools (F1)", () => {
+    it("paperclipGetMyProfile round-trips default profile", async () => {
+      const defaultProfile = {
+        subscriptionOnly: true,
+        claudeSubscription: null,
+        codexSubscription: null,
+        preferences: {},
+      };
+      const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse(defaultProfile));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tool = getTool("paperclipGetMyProfile");
+      const response = await tool.execute({});
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url] = fetchMock.mock.calls[0] as [string];
+      expect(String(url)).toBe("http://localhost:3100/api/me/profile");
+      const payload = JSON.parse(response.content[0]!.text);
+      expect(payload.subscriptionOnly).toBe(true);
+      expect(payload.claudeSubscription).toBeNull();
+      expect(payload.codexSubscription).toBeNull();
+    });
+
+    it("paperclipUpdateMyProfile forwards the patch body", async () => {
+      const updated = {
+        subscriptionOnly: false,
+        claudeSubscription: "pro",
+        codexSubscription: null,
+        preferences: {},
+      };
+      const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse(updated));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tool = getTool("paperclipUpdateMyProfile");
+      await tool.execute({ subscriptionOnly: false, claudeSubscription: "pro" });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(String(url)).toBe("http://localhost:3100/api/me/profile");
+      expect(init.method).toBe("PATCH");
+      const body = JSON.parse(String(init.body));
+      expect(body.subscriptionOnly).toBe(false);
+      expect(body.claudeSubscription).toBe("pro");
+    });
+  });
+
   it("paperclipDiagnoseIssue does not flag stale lock when run is active", async () => {
     const fetchMock = vi.fn().mockImplementation((url: URL | string) => {
       const path = String(url);

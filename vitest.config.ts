@@ -7,6 +7,7 @@ export default defineConfig({
       "packages/db",
       "packages/adapters/codex-local",
       "packages/adapters/opencode-local",
+      "packages/shared",
       "server",
       "ui",
       "cli",
