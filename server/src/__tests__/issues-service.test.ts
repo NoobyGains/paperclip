@@ -299,33 +299,6 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     expect(result.map((issue) => issue.id)).toEqual([titleMatchId, descriptionMatchId]);
   });
 
-  it("truncates multibyte UTF-8 descriptions safely in list results", async () => {
-    const companyId = randomUUID();
-    const issueId = randomUUID();
-    const boundaryDescription = `${"a".repeat(1198)}…tail`;
-
-    await db.insert(companies).values({
-      id: companyId,
-      name: "Paperclip",
-      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
-      requireBoardApprovalForNewAgents: false,
-    });
-
-    await db.insert(issues).values({
-      id: issueId,
-      companyId,
-      title: "UTF-8 boundary issue",
-      description: boundaryDescription,
-      status: "todo",
-      priority: "medium",
-    });
-
-    const result = await svc.list(companyId, {});
-
-    expect(result).toHaveLength(1);
-    expect(result[0]?.description).toContain("…");
-  });
-
   it("ranks comment matches ahead of description-only matches", async () => {
     const companyId = randomUUID();
     const commentMatchId = randomUUID();

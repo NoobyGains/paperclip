@@ -456,12 +456,12 @@ describe("prioritizeProjectWorkspaceCandidatesForRun", () => {
 });
 
 describe("parseSessionCompactionPolicy", () => {
-  it("keeps conservative defaults for codex_local while leaving claude_local adapter-managed", () => {
+  it("leaves codex_local and claude_local adapter-managed by default", () => {
     expect(parseSessionCompactionPolicy(buildAgent("codex_local"))).toEqual({
       enabled: true,
-      maxSessionRuns: 200,
-      maxRawInputTokens: 2_000_000,
-      maxSessionAgeHours: 72,
+      maxSessionRuns: 0,
+      maxRawInputTokens: 0,
+      maxSessionAgeHours: 0,
     });
     expect(parseSessionCompactionPolicy(buildAgent("claude_local"))).toEqual({
       enabled: true,
@@ -502,7 +502,7 @@ describe("parseSessionCompactionPolicy", () => {
       enabled: true,
       maxSessionRuns: 25,
       maxRawInputTokens: 500_000,
-      maxSessionAgeHours: 72,
+      maxSessionAgeHours: 0,
     });
   });
 });

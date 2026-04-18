@@ -134,10 +134,6 @@ function sameRunLock(checkoutRunId: string | null, actorRunId: string | null) {
 const TERMINAL_HEARTBEAT_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
 const ISSUE_LIST_DESCRIPTION_MAX_CHARS = 1200;
 
-function utf8SafeText(expression: unknown) {
-  return sql<string | null>`convert_from(convert_to(${expression}, 'SQL_ASCII'), 'UTF8')`;
-}
-
 function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, "\\$&");
 }
@@ -543,7 +539,7 @@ const issueListSelect = {
   description: sql<string | null>`
     CASE
       WHEN ${issues.description} IS NULL THEN NULL
-      ELSE left(${utf8SafeText(issues.description)}, ${ISSUE_LIST_DESCRIPTION_MAX_CHARS})
+      ELSE left(${issues.description}, ${ISSUE_LIST_DESCRIPTION_MAX_CHARS})
     END
   `,
   status: issues.status,

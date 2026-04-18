@@ -111,13 +111,20 @@ function upsertWorkspaceWriteNetworkAccessToml(content: string): string {
   return next.endsWith("\n") ? next : `${next}\n`;
 }
 
-async function ensureWorkspaceWriteNetworkAccessConfig(targetHome: string): Promise<void> {
+async function ensureWorkspaceWriteNetworkAccessConfig(
+  targetHome: string,
+  onLog: AdapterExecutionContext["onLog"],
+): Promise<void> {
   const targetConfigPath = path.join(targetHome, "config.toml");
   const existingConfig = await fs.readFile(targetConfigPath, "utf8").catch(() => "");
   const nextConfig = upsertWorkspaceWriteNetworkAccessToml(existingConfig);
   if (nextConfig === existingConfig) return;
   await ensureParentDir(targetConfigPath);
   await fs.writeFile(targetConfigPath, nextConfig, "utf8");
+  await onLog(
+    "stdout",
+    `[paperclip] Enabled sandbox_workspace_write.network_access in managed Codex config "${targetConfigPath}".\n`,
+  );
 }
 
 export async function prepareManagedCodexHome(
@@ -144,7 +151,7 @@ export async function prepareManagedCodexHome(
     await ensureCopiedFile(path.join(targetHome, name), source);
   }
 
-  await ensureWorkspaceWriteNetworkAccessConfig(targetHome);
+  await ensureWorkspaceWriteNetworkAccessConfig(targetHome, onLog);
 
   await onLog(
     "stdout",
