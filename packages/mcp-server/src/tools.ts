@@ -308,6 +308,7 @@ const TOOL_ANNOTATIONS: Record<string, PaperclipToolAnnotations> = {
   paperclipDiagnoseIssue: { ...READ_ONLY, title: "Diagnose issue" },
   paperclipDiagnoseAgent: { ...READ_ONLY, title: "Diagnose agent" },
   paperclipDiagnoseCompany: { ...READ_ONLY, title: "Diagnose company" },
+  paperclipDiagnoseCoverage: { ...READ_ONLY, title: "Diagnose team coverage" },
   paperclipSetup: { ...READ_ONLY, title: "MCP setup validator" },
   paperclipGetAdapterModels: { ...READ_ONLY, title: "Adapter model list" },
   paperclipGetAdapterConfigSchema: { ...READ_ONLY, title: "Adapter config schema" },
@@ -1052,6 +1053,20 @@ export function createToolDefinitions(
       diagnoseCompanySchema,
       async ({ companyId, approvalAgeWarnHours }) =>
         diagnoseCompany(client, { companyId, approvalAgeWarnHours }),
+    ),
+    makeTool(
+      "paperclipDiagnoseCoverage",
+      `Coverage diagnostic: identify which 'area:' labels on open issues are not owned by any specialist agent.
+
+Call this every heartbeat. If any label appears in uncoveredLabels with issueCount >= 3, hire a new specialist for that area using paperclipHireWithProfile with the suggestedProfile.
+
+CEO and reviewer agents are excluded from coverage because they do not take specialist issue work. Only agents whose capabilities string contains 'area:<label>' tokens (e.g. "Owns area:backend and area:database issues.") are counted as covering that label.`,
+      z.object({ companyId: companyIdOptional }),
+      async ({ companyId }) => {
+        const id = companyId ?? client.defaults.companyId;
+        if (!id) throw new Error("companyId is required");
+        return client.requestJson("GET", `/companies/${id}/coverage`);
+      },
     ),
     makeTool(
       "paperclipListHiringProfiles",
