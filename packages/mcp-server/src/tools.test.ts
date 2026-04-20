@@ -321,6 +321,29 @@ describe("paperclip MCP tools", () => {
     expect(tool.annotations?.openWorldHint).toBe(true);
   });
 
+  // #58 — first-class MCP tool for triggering the github-issue-bridge
+  // sync (in addition to the fire-and-forget auto-sync on project create).
+  it("paperclipSyncProjectGithub POSTs to /projects/:id/github-issues/sync", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockJsonResponse({ imported: 4, skippedAlreadyMirrored: 0, createdIssueIds: [], warnings: [] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipSyncProjectGithub");
+    const response = await tool.execute({
+      projectId: "55555555-5555-5555-5555-555555555555",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe(
+      "http://localhost:3100/api/projects/55555555-5555-5555-5555-555555555555/github-issues/sync",
+    );
+    expect(init.method).toBe("POST");
+    const payload = JSON.parse(response.content[0]!.text);
+    expect(payload.imported).toBe(4);
+  });
+
   it("paperclipListHiringProfiles returns all seven profiles with expanded adapterConfig", async () => {
     vi.stubGlobal("fetch", vi.fn());
     const tool = getTool("paperclipListHiringProfiles");

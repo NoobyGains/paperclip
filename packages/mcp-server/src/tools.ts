@@ -329,6 +329,7 @@ const TOOL_ANNOTATIONS: Record<string, PaperclipToolAnnotations> = {
   paperclipDiagnoseAgent: { ...READ_ONLY, title: "Diagnose agent" },
   paperclipDiagnoseCompany: { ...READ_ONLY, title: "Diagnose company" },
   paperclipDiagnoseCoverage: { ...READ_ONLY, title: "Diagnose team coverage" },
+  paperclipSyncProjectGithub: { ...SAFE_WRITE, title: "Sync GitHub issues to project" },
   paperclipSetup: { ...READ_ONLY, title: "MCP setup validator" },
   paperclipGetAdapterModels: { ...READ_ONLY, title: "Adapter model list" },
   paperclipGetAdapterConfigSchema: { ...READ_ONLY, title: "Adapter config schema" },
@@ -1073,6 +1074,13 @@ export function createToolDefinitions(
       diagnoseCompanySchema,
       async ({ companyId, approvalAgeWarnHours }) =>
         diagnoseCompany(client, { companyId, approvalAgeWarnHours }),
+    ),
+    makeTool(
+      "paperclipSyncProjectGithub",
+      "Mirror open GitHub issues from the project's workspace remote into paperclip. Idempotent — issues already mirrored (originKind='github_issue') are skipped. Also runs automatically on project create, so manual calls are only needed for re-sync after new GitHub issues are filed.",
+      z.object({ projectId: z.string().uuid() }),
+      async ({ projectId }) =>
+        client.requestJson("POST", `/projects/${projectId}/github-issues/sync`),
     ),
     makeTool(
       "paperclipDiagnoseCoverage",
