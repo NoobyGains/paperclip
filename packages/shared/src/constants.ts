@@ -197,8 +197,28 @@ export type IssueExecutionStateStatus = (typeof ISSUE_EXECUTION_STATE_STATUSES)[
 export const ISSUE_EXECUTION_DECISION_OUTCOMES = ["approved", "changes_requested"] as const;
 export type IssueExecutionDecisionOutcome = (typeof ISSUE_EXECUTION_DECISION_OUTCOMES)[number];
 
-export const GOAL_LEVELS = ["company", "team", "agent", "task"] as const;
+/**
+ * Goal vocabulary (#83).
+ *
+ * The legacy `company | team | agent | task` values conflate "who owns it"
+ * with "where it sits in the hierarchy". The OKR-style `objective` and
+ * `key_result` values describe hierarchy position, which is what `level`
+ * semantically wants. `GOAL_SCOPES` carries the ownership dimension as a
+ * separate field so the two can evolve independently. Both vocabularies
+ * remain accepted to keep existing clients working.
+ */
+export const GOAL_LEVELS = [
+  "company",
+  "team",
+  "agent",
+  "task",
+  "objective",
+  "key_result",
+] as const;
 export type GoalLevel = (typeof GOAL_LEVELS)[number];
+
+export const GOAL_SCOPES = ["company", "team", "agent", "project"] as const;
+export type GoalScope = (typeof GOAL_SCOPES)[number];
 
 export const GOAL_STATUSES = ["planned", "active", "achieved", "cancelled"] as const;
 export type GoalStatus = (typeof GOAL_STATUSES)[number];
