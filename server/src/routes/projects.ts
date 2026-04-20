@@ -13,6 +13,7 @@ import {
 import { trackProjectCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
 import { projectService, logActivity, secretService, workspaceOperationService } from "../services/index.js";
+import { githubIssueBridge } from "../services/github-issue-bridge.js";
 import { conflict } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import {
@@ -145,6 +146,52 @@ export function projectRoutes(db: Db) {
     if (telemetryClient) {
       trackProjectCreated(telemetryClient);
     }
+
+    // #58 — fire-and-forget: if the new workspace has a GitHub remote,
+    // run the bridge sync so issues appear in paperclip without a second
+    // manual call. Async on purpose — don't block the HTTP response on
+    // a slow gh call. Failure is logged but not surfaced.
+    if (createdWorkspaceId) {
+      const bridge = githubIssueBridge(db);
+      void (async () => {
+        try {
+          const result = await bridge.syncProject(project.id, {
+            actor: {
+              actorId: actor.actorId,
+              agentId: actor.agentId,
+            },
+          });
+          await logActivity(db, {
+            companyId,
+            actorType: actor.actorType,
+            actorId: actor.actorId,
+            agentId: actor.agentId,
+            action: "project.github_issue_bridge_auto_synced",
+            entityType: "project",
+            entityId: project.id,
+            details: {
+              imported: result.imported,
+              skippedAlreadyMirrored: result.skippedAlreadyMirrored,
+              warnings: result.warnings,
+            },
+          });
+        } catch (error) {
+          await logActivity(db, {
+            companyId,
+            actorType: actor.actorType,
+            actorId: actor.actorId,
+            agentId: actor.agentId,
+            action: "project.github_issue_bridge_auto_sync_failed",
+            entityType: "project",
+            entityId: project.id,
+            details: {
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
+      })();
+    }
+
     res.status(201).json(hydratedProject ?? project);
   });
 
