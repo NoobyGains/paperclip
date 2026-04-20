@@ -2,7 +2,7 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GithubIssue } from "../services/github-issue-bridge.js";
-import { parseGitHubRemoteUrl } from "../services/github-issue-bridge.js";
+import { mapGithubPriorityFromLabels, parseGitHubRemoteUrl } from "../services/github-issue-bridge.js";
 
 function buildProject(overrides: Record<string, unknown> = {}) {
   return {
@@ -82,6 +82,33 @@ describe("parseGitHubRemoteUrl", () => {
 
   it("rejects a repo segment that is ..", () => {
     expect(parseGitHubRemoteUrl("https://github.com/owner/..")).toBeNull();
+  });
+});
+
+describe("mapGithubPriorityFromLabels", () => {
+  it("defaults to medium when no priority label is present", () => {
+    expect(mapGithubPriorityFromLabels(["bug", "area:backend"])).toBe("medium");
+    expect(mapGithubPriorityFromLabels([])).toBe("medium");
+  });
+
+  it("maps each priority tier to the native paperclip value", () => {
+    expect(mapGithubPriorityFromLabels(["priority:critical"])).toBe("critical");
+    expect(mapGithubPriorityFromLabels(["priority:high"])).toBe("high");
+    expect(mapGithubPriorityFromLabels(["priority:medium"])).toBe("medium");
+    expect(mapGithubPriorityFromLabels(["priority:low"])).toBe("low");
+  });
+
+  it("is case-insensitive on the label", () => {
+    expect(mapGithubPriorityFromLabels(["Priority:High"])).toBe("high");
+    expect(mapGithubPriorityFromLabels(["PRIORITY:CRITICAL"])).toBe("critical");
+  });
+
+  it("picks the last match when conflicting priority labels exist", () => {
+    expect(mapGithubPriorityFromLabels(["priority:low", "priority:high"])).toBe("high");
+  });
+
+  it("ignores unrelated labels that happen to contain priority substring", () => {
+    expect(mapGithubPriorityFromLabels(["priority", "priorityish:high"])).toBe("medium");
   });
 });
 

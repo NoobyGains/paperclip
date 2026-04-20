@@ -64,6 +64,26 @@ function readGithubIssueLabels(issue: GithubIssue): string[] {
     .filter((label) => label.length > 0);
 }
 
+/**
+ * Translate GitHub `priority:*` labels into the paperclip `priority` field.
+ * Case-insensitive. Returns "medium" when no matching label is present.
+ * Later labels win if the GitHub issue carries conflicting priority tags,
+ * which matches GitHub's own left-to-right label display order.
+ */
+export function mapGithubPriorityFromLabels(
+  labels: string[],
+): "critical" | "high" | "medium" | "low" {
+  let resolved: "critical" | "high" | "medium" | "low" = "medium";
+  for (const raw of labels) {
+    const lower = raw.trim().toLowerCase();
+    if (lower === "priority:critical") resolved = "critical";
+    else if (lower === "priority:high") resolved = "high";
+    else if (lower === "priority:medium") resolved = "medium";
+    else if (lower === "priority:low") resolved = "low";
+  }
+  return resolved;
+}
+
 function normalizeLabelSet(values: string[] | null | undefined): Set<string> {
   return new Set(
     (values ?? [])
@@ -316,7 +336,7 @@ export function githubIssueBridge(db: Db, deps: GithubIssueBridgeDependencies = 
           assigneeAgentId,
           projectId: project.id,
           status: "todo",
-          priority: "medium",
+          priority: mapGithubPriorityFromLabels(labelNames),
           metadata: {
             githubIssueNumber: ghIssue.number,
             githubUrl: ghIssue.url,
