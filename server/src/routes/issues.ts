@@ -65,6 +65,7 @@ import {
   normalizeIssueExecutionPolicy,
   parseIssueExecutionState,
 } from "../services/issue-execution-policy.js";
+import { buildCoverageSummary } from "./company-coverage.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 const updateIssueRouteSchema = updateIssueSchema.extend({
@@ -769,7 +770,13 @@ export function issueRoutes(
         ? req.query.wakeCommentId.trim()
         : null;
 
-    const [{ project, goal }, ancestors, commentCursor, wakeComment, relations, attachments] =
+    // Determine if the requesting agent is a CEO so we can inject the coverage alert.
+    const actorAgentId =
+      req.actor.type === "agent" ? (req.actor.agentId ?? null) : null;
+    const actorAgent = actorAgentId ? await agentsSvc.getById(actorAgentId) : null;
+    const isCeo = actorAgent?.role === "ceo";
+
+    const [{ project, goal }, ancestors, commentCursor, wakeComment, relations, attachments, uncoveredLabels] =
       await Promise.all([
       resolveIssueProjectAndGoal(issue),
       svc.getAncestors(issue.id),
@@ -777,7 +784,19 @@ export function issueRoutes(
       wakeCommentId ? svc.getComment(wakeCommentId) : null,
       svc.getRelationSummaries(issue.id),
       svc.listAttachments(issue.id),
+      isCeo ? buildCoverageSummary(db, issue.companyId) : Promise.resolve([]),
     ]);
+
+    // Build the compact coverage alert block for CEO agents.
+    let coverageAlert: string | null = null;
+    if (isCeo && uncoveredLabels.length > 0) {
+      const lines = [
+        `COVERAGE ALERT: ${uncoveredLabels.length} uncovered area label${uncoveredLabels.length === 1 ? "" : "s"} with open issues —`,
+        ...uncoveredLabels.map((l) => `  ${l.label} (${l.issueCount} issue${l.issueCount === 1 ? "" : "s"})`),
+        `Hire a specialist via paperclipHireWithProfile({ profile: "coding-heavy" }) before delegating new work.`,
+      ];
+      coverageAlert = lines.join("\n");
+    }
 
     res.json({
       issue: {
@@ -833,6 +852,7 @@ export function issueRoutes(
         contentPath: withContentPath(a).contentPath,
         createdAt: a.createdAt,
       })),
+      ...(coverageAlert !== null ? { coverageAlert } : {}),
     });
   });
 
