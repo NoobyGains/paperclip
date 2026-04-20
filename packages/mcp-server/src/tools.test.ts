@@ -897,6 +897,113 @@ describe("paperclip MCP tools", () => {
     });
   });
 
+  // #82 — paperclipBootstrapApp should write a .paperclip/ceo/AGENTS.md overlay
+  // into the repo so project-specific CEO instructions travel with the code.
+  describe("paperclipBootstrapApp CEO overlay writing (#82)", () => {
+    async function runBootstrapWithRealRepo(overrides: Record<string, unknown> = {}) {
+      const os = await import("node:os");
+      const path = await import("node:path");
+      const fsPromises = await import("node:fs/promises");
+      const tmp = await fsPromises.mkdtemp(path.join(os.tmpdir(), "paperclip-bootstrap-overlay-"));
+      try {
+        const fetchMock = vi.fn().mockImplementation(async (url: URL | string, init?: RequestInit) => {
+          const u = String(url);
+          const method = init?.method ?? "GET";
+          if (method === "POST" && u.endsWith("/api/companies")) {
+            return mockJsonResponse({ id: "c-ov", name: "Overlay App workspace" });
+          }
+          if (method === "PATCH" && u.includes("/api/companies/c-ov")) {
+            return mockJsonResponse({
+              id: "c-ov",
+              name: "Overlay App workspace",
+              autoHireEnabled: true,
+              requireBoardApprovalForNewAgents: false,
+            });
+          }
+          if (method === "POST" && u.includes("/api/companies/c-ov/agents")) {
+            return mockJsonResponse({ id: "ceo-ov", name: "CEO", adapterType: "claude_local" });
+          }
+          if (method === "POST" && u.includes("/api/companies/c-ov/agent-hires")) {
+            return mockJsonResponse({ id: "hire-1", agentId: "hire-1" });
+          }
+          if (method === "POST" && u.includes("/api/companies/c-ov/projects")) {
+            return mockJsonResponse({ id: "proj-ov", name: "Overlay App", workspace: {} });
+          }
+          if (method === "POST" && u.includes("/api/companies/c-ov/goals")) {
+            return mockJsonResponse({ id: "goal-ov", title: "Ship Overlay App" });
+          }
+          if (method === "PATCH" && u.includes("/api/projects/proj-ov")) {
+            return mockJsonResponse({ id: "proj-ov" });
+          }
+          if (method === "POST" && u.endsWith("/api/project-archetype/detect")) {
+            return mockJsonResponse({ stack: "unknown" });
+          }
+          throw new Error(`Unmocked ${method} ${u}`);
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const tool = getTool("paperclipBootstrapApp");
+        const response = await tool.execute({
+          name: "Overlay App",
+          repoPath: tmp,
+          writeProjectConfig: false,
+          hireShapedTeam: false,
+          ...overrides,
+        });
+        const payload = JSON.parse(response.content[0]!.text);
+        return { payload, tmp };
+      } finally {
+        // caller clean up
+      }
+    }
+
+    it("writes .paperclip/ceo/AGENTS.md into the repo by default", async () => {
+      const fsPromises = await import("node:fs/promises");
+      const path = await import("node:path");
+      const { payload, tmp } = await runBootstrapWithRealRepo();
+      try {
+        expect(payload.ceoOverlay).toBeTruthy();
+        expect(payload.ceoOverlay.written).toBe(true);
+        const expectedPath = path.join(tmp, ".paperclip", "ceo", "AGENTS.md");
+        const content = await fsPromises.readFile(expectedPath, "utf8");
+        expect(content).toContain("Project-specific CEO instructions — Overlay App");
+        expect(content).toContain("coding-heavy");
+        expect(content).toContain("paperclipDiagnoseCoverage");
+        expect(content).toContain("paperclipDiagnoseBottlenecks");
+      } finally {
+        await fsPromises.rm(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it("skips the overlay write when writeCeoOverlay=false", async () => {
+      const fsPromises = await import("node:fs/promises");
+      const path = await import("node:path");
+      const { payload, tmp } = await runBootstrapWithRealRepo({ writeCeoOverlay: false });
+      try {
+        expect(payload.ceoOverlay).toBeNull();
+        const overlayPath = path.join(tmp, ".paperclip", "ceo", "AGENTS.md");
+        const exists = await fsPromises.stat(overlayPath).then(() => true).catch(() => false);
+        expect(exists).toBe(false);
+      } finally {
+        await fsPromises.rm(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it("reports overlay content that reflects hireReviewer=false when the flag is passed", async () => {
+      const fsPromises = await import("node:fs/promises");
+      const path = await import("node:path");
+      const { payload, tmp } = await runBootstrapWithRealRepo({ hireReviewer: false });
+      try {
+        const expectedPath = path.join(tmp, ".paperclip", "ceo", "AGENTS.md");
+        const content = await fsPromises.readFile(expectedPath, "utf8");
+        expect(content).toContain("disabled at bootstrap");
+        expect(payload.ceoOverlay.written).toBe(true);
+      } finally {
+        await fsPromises.rm(tmp, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe("operator profile tools (F1)", () => {
     it("paperclipGetMyProfile round-trips default profile", async () => {
       const defaultProfile = {
