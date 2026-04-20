@@ -20,3 +20,4 @@ export { accessRoutes } from "./access.js";
 export { instanceSettingsRoutes } from "./instance-settings.js";
 export { ceoOverlayRoutes } from "./ceo-overlay.js";
 export { portfolioOnboardRoutes } from "./portfolio-onboard.js";
+export { companyCoverageRoutes } from "./company-coverage.js";

@@ -1237,4 +1237,54 @@ describe("paperclip MCP tools", () => {
       expect(tool.annotations?.destructiveHint).toBe(false);
     });
   });
+
+  describe("paperclipDiagnoseCoverage", () => {
+    it("hits GET /companies/:id/coverage using the default company id", async () => {
+      const mockBody = {
+        labelCounts: [{ label: "area:frontend", count: 4 }],
+        coveredLabels: [],
+        uncoveredLabels: [
+          { label: "area:frontend", issueCount: 4, suggestedProfile: "coding-heavy" },
+        ],
+        summary: { openIssueCount: 4, coveredCount: 0, uncoveredCount: 1 },
+      };
+      const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse(mockBody));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tool = getTool("paperclipDiagnoseCoverage");
+      const response = await tool.execute({});
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(String(url)).toBe(
+        "http://localhost:3100/api/companies/11111111-1111-1111-1111-111111111111/coverage",
+      );
+      expect((init as RequestInit).method).toBe("GET");
+
+      const payload = JSON.parse(response.content[0]!.text);
+      expect(payload.uncoveredLabels).toHaveLength(1);
+      expect(payload.uncoveredLabels[0].label).toBe("area:frontend");
+      expect(payload.summary.uncoveredCount).toBe(1);
+    });
+
+    it("accepts an explicit companyId override", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockJsonResponse({ labelCounts: [], coveredLabels: [], uncoveredLabels: [], summary: { openIssueCount: 0, coveredCount: 0, uncoveredCount: 0 } }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tool = getTool("paperclipDiagnoseCoverage");
+      await tool.execute({ companyId: "99999999-9999-9999-9999-999999999999" });
+
+      const [url] = fetchMock.mock.calls[0] as [string];
+      expect(String(url)).toContain("/companies/99999999-9999-9999-9999-999999999999/coverage");
+    });
+
+    it("is annotated as READ_ONLY", () => {
+      const tool = getTool("paperclipDiagnoseCoverage");
+      expect(tool.annotations?.readOnlyHint).toBe(true);
+      expect(tool.annotations?.destructiveHint).toBe(false);
+      expect(tool.annotations?.title).toBe("Diagnose team coverage");
+    });
+  });
 });

@@ -32,6 +32,7 @@ import { inboxDismissalRoutes } from "./routes/inbox-dismissals.js";
 import { instanceSettingsRoutes } from "./routes/instance-settings.js";
 import { ceoOverlayRoutes } from "./routes/ceo-overlay.js";
 import { portfolioOnboardRoutes } from "./routes/portfolio-onboard.js";
+import { companyCoverageRoutes } from "./routes/company-coverage.js";
 import { llmRoutes } from "./routes/llms.js";
 import { mcpManifestRoutes } from "./routes/mcp-manifest.js";
 import { authRoutes } from "./routes/auth.js";
@@ -181,6 +182,7 @@ export async function createApp(
     }),
   );
   api.use("/companies", companyRoutes(db, opts.storageService));
+  api.use("/companies", companyCoverageRoutes(db));
   api.use(companySkillRoutes(db));
   api.use(agentRoutes(db));
   api.use(assetRoutes(db, opts.storageService));
