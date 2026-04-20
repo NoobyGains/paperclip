@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { z } from "zod";
 import {
   addIssueCommentSchema,
@@ -123,6 +125,46 @@ const apiRequestSchema = z.object({
   path: z.string().min(1),
   jsonBody: z.string().optional(),
 });
+
+const bootstrapAppSchema = z.object({
+  name: z.string().min(1).describe("Human-readable project name"),
+  repoPath: z.string().min(1).describe("Absolute path to the repository root on disk"),
+  defaultHiringProfile: z.string().min(1).default("engineer").describe("Hiring profile to use for engineering specialists"),
+  autoReviewEnabled: z.boolean().default(true).describe("Whether automated code review is enabled for this project"),
+  writeCeoOverlay: z.boolean().optional().default(true).describe("Write .paperclip/ceo/AGENTS.md into the repo so per-project CEO instructions travel with the code."),
+  companyId: companyIdOptional,
+});
+
+function buildCeoOverlayContent(input: {
+  name: string;
+  defaultHiringProfile: string;
+  autoReviewEnabled: boolean;
+}): string {
+  return `# Project-specific CEO instructions — ${input.name}
+
+This overlay augments the default CEO instructions for this repo. It was
+written by paperclipBootstrapApp and encodes the bootstrap defaults. Delete
+or edit freely — it is tracked in git.
+
+## Hiring standard
+
+- Engineering specialists: paperclipHireWithProfile({ profile: "${input.defaultHiringProfile}" })
+  → codex_local + gpt-5.4 + search + effort=high
+- Reviewers: paperclipHireWithProfile({ profile: "reviewer" })
+  → claude_local + claude-opus-4-7 + effort=high
+
+## Review defaults
+
+- autoReviewEnabled: ${input.autoReviewEnabled}
+- Primary reviewer: hired at bootstrap. New reviewers hired via the reviewer profile are load-balanced automatically (#80).
+
+## Re-running
+
+If this file is missing or out of date, run paperclipBootstrapApp against this
+repo again — the bootstrap is idempotent and will re-write only the files it
+owns.
+`;
+}
 
 export function createToolDefinitions(client: PaperclipApiClient): ToolDefinition[] {
   return [
@@ -409,6 +451,39 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
         client.requestJson("POST", `/approvals/${encodeURIComponent(approvalId)}/comments`, {
           body: { body },
         }),
+    ),
+    makeTool(
+      "paperclipBootstrapApp",
+      "Bootstrap a project in Paperclip and optionally write a per-project CEO overlay (AGENTS.md) into the repo",
+      bootstrapAppSchema,
+      async ({ name, repoPath, defaultHiringProfile, autoReviewEnabled, writeCeoOverlay, companyId }) => {
+        const project = await client.requestJson<{ id: string }>(
+          "POST",
+          `/companies/${client.resolveCompanyId(companyId)}/projects`,
+          { body: { name } },
+        );
+
+        const overlayPath = path.join(repoPath, ".paperclip", "ceo", "AGENTS.md");
+        let overlayWritten = false;
+        let overlayWarning: string | undefined;
+
+        if (writeCeoOverlay) {
+          try {
+            fs.mkdirSync(path.dirname(overlayPath), { recursive: true });
+            fs.writeFileSync(overlayPath, buildCeoOverlayContent({ name, defaultHiringProfile, autoReviewEnabled }), "utf8");
+            overlayWritten = true;
+          } catch (err) {
+            overlayWarning = err instanceof Error ? err.message : String(err);
+          }
+        }
+
+        return {
+          project,
+          overlayPath,
+          overlayWritten,
+          ...(overlayWarning ? { overlayWarning } : {}),
+        };
+      },
     ),
     makeTool(
       "paperclipApiRequest",
