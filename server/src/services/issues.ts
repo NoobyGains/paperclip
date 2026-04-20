@@ -137,6 +137,52 @@ const TERMINAL_HEARTBEAT_RUN_STATUSES = new Set(["succeeded", "failed", "cancell
 const ISSUE_LIST_DESCRIPTION_MAX_CHARS = 1200;
 const AUTO_REVIEW_ELIGIBLE_AGENT_STATUSES = ["active", "idle", "running"] as const;
 
+export interface ReviewerCandidate {
+  id: string;
+  status: string;
+  createdAt: Date;
+  activeReviewCount: number;
+}
+
+/**
+ * Pure function — picks the least-loaded eligible reviewer.
+ *
+ * Selection rules:
+ *  1. Only consider candidates whose status is in AUTO_REVIEW_ELIGIBLE_AGENT_STATUSES
+ *     and who are not the issue's assignee.
+ *  2. Among eligible candidates, pick the one with the lowest activeReviewCount.
+ *  3. Tiebreak: the defaultReviewerAgentId candidate wins; otherwise earliest createdAt.
+ *
+ * Returns null when no eligible candidate exists.
+ */
+export function resolveAutoReviewer(opts: {
+  defaultReviewerAgentId: string | null;
+  reviewers: ReviewerCandidate[];
+  assigneeAgentId: string | null;
+}): string | null {
+  const { defaultReviewerAgentId, reviewers, assigneeAgentId } = opts;
+  const eligibleStatuses = new Set<string>(AUTO_REVIEW_ELIGIBLE_AGENT_STATUSES);
+
+  const eligible = reviewers.filter(
+    (r) => eligibleStatuses.has(r.status) && r.id !== assigneeAgentId,
+  );
+  if (eligible.length === 0) return null;
+
+  eligible.sort((a, b) => {
+    if (a.activeReviewCount !== b.activeReviewCount) {
+      return a.activeReviewCount - b.activeReviewCount;
+    }
+    // tiebreak: primary reviewer first
+    const aIsPrimary = a.id === defaultReviewerAgentId ? 0 : 1;
+    const bIsPrimary = b.id === defaultReviewerAgentId ? 0 : 1;
+    if (aIsPrimary !== bIsPrimary) return aIsPrimary - bIsPrimary;
+    // final tiebreak: oldest first
+    return a.createdAt.getTime() - b.createdAt.getTime();
+  });
+
+  return eligible[0].id;
+}
+
 function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, "\\$&");
 }
@@ -686,62 +732,60 @@ export function issueService(db: Db) {
     }
 
     const assigneeAgentId = input.assigneeAgentId ?? null;
-    const assigneeAdapterType = assigneeAgentId
-      ? await dbOrTx
-        .select({ adapterType: agents.adapterType })
-        .from(agents)
-        .where(and(eq(agents.id, assigneeAgentId), eq(agents.companyId, companyId)))
-        .then((rows: Array<{ adapterType: string | null }>) => rows[0]?.adapterType ?? null)
-      : null;
 
-    const designatedReviewer = company.defaultReviewerAgentId
-      ? await dbOrTx
+    // Fetch all reviewer-role agents in this company so we can load-balance.
+    const reviewerAgents: Array<{ id: string; status: string; createdAt: Date }> = await dbOrTx
+      .select({
+        id: agents.id,
+        status: agents.status,
+        createdAt: agents.createdAt,
+      })
+      .from(agents)
+      .where(and(eq(agents.companyId, companyId), eq(agents.role, "reviewer")))
+      .orderBy(asc(agents.createdAt), asc(agents.id))
+      .then((rows: Array<{ id: string; status: string; createdAt: Date }>) => rows);
+
+    // Count how many issues each reviewer is currently active in review for.
+    const reviewerIds: string[] = reviewerAgents.map((r: { id: string }) => r.id);
+    const activeReviewCountMap = new Map<string, number>(reviewerIds.map((id: string) => [id, 0] as [string, number]));
+    if (reviewerIds.length > 0) {
+      const participantAgentIdExpr = sql<string>`${issues.executionState}->'currentParticipant'->>'agentId'`;
+      const counts = await dbOrTx
         .select({
-          id: agents.id,
-          adapterType: agents.adapterType,
-          status: agents.status,
+          agentId: participantAgentIdExpr,
+          count: sql<number>`count(*)::int`,
         })
-        .from(agents)
-        .where(and(eq(agents.id, company.defaultReviewerAgentId), eq(agents.companyId, companyId)))
-        .then((rows: Array<{ id: string; adapterType: string | null; status: string }>) => rows[0] ?? null)
-      : null;
-
-    let reviewerId: string | null = null;
-    if (
-      designatedReviewer
-      && AUTO_REVIEW_ELIGIBLE_AGENT_STATUSES.includes(
-        designatedReviewer.status as (typeof AUTO_REVIEW_ELIGIBLE_AGENT_STATUSES)[number],
-      )
-      && designatedReviewer.id !== assigneeAgentId
-    ) {
-      reviewerId = designatedReviewer.id;
-    }
-
-    if (!reviewerId) {
-      const fallbackConditions = [
-        eq(agents.companyId, companyId),
-        inArray(agents.status, [...AUTO_REVIEW_ELIGIBLE_AGENT_STATUSES]),
-      ];
-      if (assigneeAgentId) {
-        fallbackConditions.push(ne(agents.id, assigneeAgentId));
-      }
-      if (assigneeAdapterType) {
-        fallbackConditions.push(ne(agents.adapterType, assigneeAdapterType));
-      }
-      const eligibleFallback = await dbOrTx
-        .select({
-          id: agents.id,
-        })
-        .from(agents)
-        .where(and(...fallbackConditions))
-        .orderBy(
-          sql`CASE WHEN ${agents.role} = 'reviewer' THEN 0 ELSE 1 END`,
-          asc(agents.createdAt),
-          asc(agents.id),
+        .from(issues)
+        .where(
+          and(
+            eq(issues.companyId, companyId),
+            sql`${issues.executionState}->>'currentStageType' = 'review'`,
+            inArray(participantAgentIdExpr, reviewerIds),
+          ),
         )
-        .then((rows: Array<{ id: string }>) => rows[0] ?? null);
-      reviewerId = eligibleFallback?.id ?? null;
+        .groupBy(participantAgentIdExpr)
+        .then((rows: Array<{ agentId: string | null; count: number }>) => rows);
+      for (const row of counts) {
+        if (row.agentId && activeReviewCountMap.has(row.agentId)) {
+          activeReviewCountMap.set(row.agentId, row.count);
+        }
+      }
     }
+
+    const reviewerCandidates: ReviewerCandidate[] = reviewerAgents.map(
+      (r: { id: string; status: string; createdAt: Date }) => ({
+        id: r.id,
+        status: r.status,
+        createdAt: r.createdAt,
+        activeReviewCount: activeReviewCountMap.get(r.id) ?? 0,
+      }),
+    );
+
+    let reviewerId = resolveAutoReviewer({
+      defaultReviewerAgentId: company.defaultReviewerAgentId,
+      reviewers: reviewerCandidates,
+      assigneeAgentId,
+    });
 
     if (!reviewerId) {
       throw unprocessable(
