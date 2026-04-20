@@ -466,7 +466,7 @@ describe("paperclip MCP tools", () => {
     expect(createCeoCall).toBeDefined();
     expect((createCeoCall?.body as { capabilities?: string })?.capabilities).toContain("coding-heavy");
 
-    const reviewerHireCall = calls.find((c) => c.url.includes("/api/companies/c-1/agent-hires") && (c.body as Record<string, unknown>)?.role === "qa");
+    const reviewerHireCall = calls.find((c) => c.url.includes("/api/companies/c-1/agent-hires") && (c.body as Record<string, unknown>)?.role === "reviewer");
     expect(reviewerHireCall).toBeDefined();
     expect((reviewerHireCall?.body as Record<string, unknown>)?.adapterType).toBe("claude_local");
 
@@ -527,10 +527,10 @@ describe("paperclip MCP tools", () => {
     expect(payload.status).toBe("created");
     expect(payload.reviewer).toBeNull();
     expect(payload.company.defaultReviewerAgentId).toBeNull();
-    // Reviewer-specific hire (role="qa") must not have been called.
+    // Reviewer-specific hire (role="reviewer") must not have been called.
     // Shaped-team hires may still post to /agent-hires for non-reviewer slots.
     const reviewerHire = calls.find(
-      (c) => c.url.includes("/agent-hires") && (c.body as Record<string, unknown>)?.role === "qa",
+      (c) => c.url.includes("/agent-hires") && (c.body as Record<string, unknown>)?.role === "reviewer",
     );
     expect(reviewerHire).toBeUndefined();
   });
@@ -741,7 +741,7 @@ describe("paperclip MCP tools", () => {
         }
         if (method === "POST" && u.includes(`/api/companies/${companyId}/agent-hires`)) {
           const b = body as Record<string, unknown>;
-          if (opts.failSlot && b.role !== "qa") {
+          if (opts.failSlot && b.role !== "reviewer") {
             return mockJsonResponse({ error: "hire rejected" }, 422);
           }
           return mockJsonResponse({ id: `hire-${b.role as string}`, agentId: `hire-${b.role as string}` });

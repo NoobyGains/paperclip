@@ -1276,9 +1276,9 @@ CEO and reviewer agents are excluded from coverage because they do not take spec
               {
                 body: {
                   name: "Reviewer",
-                  role: "qa",
+                  role: "reviewer",
                   title: "Cross-adapter code reviewer",
-                  icon: "shield",
+                  icon: "shield-check",
                   adapterType: reviewerProfile.adapterType,
                   adapterConfig: reviewerProfile.adapterConfig,
                   capabilities:
