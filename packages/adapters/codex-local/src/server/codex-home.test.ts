@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { prepareManagedCodexHome, upsertWorkspaceWriteNetworkAccessToml } from "./codex-home.js";
 
 describe("upsertWorkspaceWriteNetworkAccessToml", () => {
@@ -147,5 +147,76 @@ describe("prepareManagedCodexHome", () => {
     expect(config).toBe(
       'model = "codex-mini-latest"\n\n[sandbox_workspace_write]\nnetwork_access = true\n',
     );
+  });
+
+  // Regression guard for #60 — Windows without Developer Mode / admin can't
+  // create symlinks. Before the fix, every codex worker errored on first wake
+  // with EPERM. The fallback copies the file instead so the adapter stays
+  // functional for non-privileged users.
+  it("falls back to copying auth.json when fs.symlink throws EPERM (Windows without symlink privilege)", async () => {
+    await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"shared"}', "utf8");
+
+    const symlinkSpy = vi.spyOn(fs, "symlink").mockImplementation(async () => {
+      const err = new Error("EPERM: operation not permitted") as NodeJS.ErrnoException;
+      err.code = "EPERM";
+      throw err;
+    });
+
+    try {
+      const home = await prepareManagedCodexHome(env, async () => {}, companyId);
+      const authPath = path.join(home, "auth.json");
+      const authStat = await fs.lstat(authPath);
+      expect(authStat.isSymbolicLink()).toBe(false);
+      expect(authStat.isFile()).toBe(true);
+      const authContent = await fs.readFile(authPath, "utf8");
+      expect(authContent).toBe('{"token":"shared"}');
+    } finally {
+      symlinkSpy.mockRestore();
+    }
+  });
+
+  it("refreshes the copied auth.json when the shared source is newer than the per-company copy", async () => {
+    const sharedAuth = path.join(sharedCodexHome, "auth.json");
+    await fs.writeFile(sharedAuth, '{"token":"v1"}', "utf8");
+
+    const symlinkSpy = vi.spyOn(fs, "symlink").mockImplementation(async () => {
+      const err = new Error("EPERM") as NodeJS.ErrnoException;
+      err.code = "EPERM";
+      throw err;
+    });
+
+    try {
+      const home = await prepareManagedCodexHome(env, async () => {}, companyId);
+      const copy = path.join(home, "auth.json");
+      expect(await fs.readFile(copy, "utf8")).toBe('{"token":"v1"}');
+
+      // Simulate the user refreshing their codex credentials: rewrite the
+      // source with a newer mtime, then re-run. Copy should pick up the
+      // change.
+      await fs.writeFile(sharedAuth, '{"token":"v2"}', "utf8");
+      const nowPlusOneSec = new Date(Date.now() + 1000);
+      await fs.utimes(sharedAuth, nowPlusOneSec, nowPlusOneSec);
+
+      await prepareManagedCodexHome(env, async () => {}, companyId);
+      expect(await fs.readFile(copy, "utf8")).toBe('{"token":"v2"}');
+    } finally {
+      symlinkSpy.mockRestore();
+    }
+  });
+
+  it("still throws non-permission errors from fs.symlink (doesn't silently swallow unrelated failures)", async () => {
+    await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"shared"}', "utf8");
+
+    const symlinkSpy = vi.spyOn(fs, "symlink").mockImplementation(async () => {
+      const err = new Error("EIO: io error") as NodeJS.ErrnoException;
+      err.code = "EIO";
+      throw err;
+    });
+
+    try {
+      await expect(prepareManagedCodexHome(env, async () => {}, companyId)).rejects.toThrow(/EIO/);
+    } finally {
+      symlinkSpy.mockRestore();
+    }
   });
 });

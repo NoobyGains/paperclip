@@ -43,15 +43,49 @@ async function ensureParentDir(target: string): Promise<void> {
   await fs.mkdir(path.dirname(target), { recursive: true });
 }
 
+/**
+ * Returns true when the error is the Windows "can't make symlinks without
+ * admin / Developer Mode" family. On those platforms we fall back to a copy
+ * so the adapter stays functional for non-privileged users (issue #60).
+ */
+function isSymlinkPermissionError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as { code?: string }).code;
+  return code === "EPERM" || code === "EACCES";
+}
+
+async function copyFileRefreshingIfStale(target: string, source: string): Promise<void> {
+  const [sourceStat, targetStat] = await Promise.all([
+    fs.stat(source).catch(() => null),
+    fs.stat(target).catch(() => null),
+  ]);
+  if (!sourceStat) return;
+  // No existing target, or source is newer than the copy → (re)copy.
+  if (!targetStat || sourceStat.mtimeMs > targetStat.mtimeMs) {
+    await ensureParentDir(target);
+    await fs.copyFile(source, target);
+  }
+}
+
 async function ensureSymlink(target: string, source: string): Promise<void> {
   const existing = await fs.lstat(target).catch(() => null);
   if (!existing) {
     await ensureParentDir(target);
-    await fs.symlink(source, target);
+    try {
+      await fs.symlink(source, target);
+    } catch (error) {
+      if (!isSymlinkPermissionError(error)) throw error;
+      // Windows fallback: copy the file. Accepts staleness if the shared
+      // source is later updated; callers can re-run to refresh.
+      await copyFileRefreshingIfStale(target, source);
+    }
     return;
   }
 
+  // If the target already exists as a plain file (from a prior copy-fallback
+  // run), keep it in sync with the source on subsequent runs.
   if (!existing.isSymbolicLink()) {
+    await copyFileRefreshingIfStale(target, source);
     return;
   }
 
@@ -62,7 +96,12 @@ async function ensureSymlink(target: string, source: string): Promise<void> {
   if (resolvedLinkedPath === source) return;
 
   await fs.unlink(target);
-  await fs.symlink(source, target);
+  try {
+    await fs.symlink(source, target);
+  } catch (error) {
+    if (!isSymlinkPermissionError(error)) throw error;
+    await copyFileRefreshingIfStale(target, source);
+  }
 }
 
 async function ensureCopiedFile(target: string, source: string): Promise<void> {
