@@ -128,9 +128,9 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
   return [
     makeTool(
       "paperclipMe",
-      "Get the current authenticated Paperclip actor details",
+      "Returns the authenticated actor (board user or agent) — works for both API key types. Response includes a `kind` field: \"board\" or \"agent\".",
       z.object({}),
-      async () => client.requestJson("GET", "/agents/me"),
+      async () => client.requestJson("GET", "/me"),
     ),
     makeTool(
       "paperclipInboxLite",
