@@ -287,6 +287,13 @@ const bootstrapAppSchema = z.object({
     .describe(
       "When true (default), detect the repo archetype and pre-hire the matching team shape (CTO + engineers + QA) after the CEO and reviewer. Set to false to skip shaped-team hiring.",
     ),
+  writeCeoOverlay: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe(
+      "When true (default), write .paperclip/ceo/AGENTS.md into the repo so the CEO's project-specific hiring standard and review defaults travel with the code. The file is markdown, git-trackable, and safe to edit.",
+    ),
 });
 
 
@@ -1221,6 +1228,7 @@ Call this every heartbeat. Act on results:
         createGoal,
         goalTitle,
         hireShapedTeam,
+        writeCeoOverlay,
       }) => {
         const trimmedRepoPath = repoPath.trim();
         const absoluteRepoPath = path.isAbsolute(trimmedRepoPath)
@@ -1432,6 +1440,55 @@ Call this every heartbeat. Act on results:
           }
         }
 
+        // 4b. Optionally write a .paperclip/ceo/AGENTS.md overlay so the
+        //     CEO's project-specific hiring standard travels with the repo.
+        //     Issue #82: before this, project-specific instructions only
+        //     lived on the company record and didn't survive reimport.
+        let overlayFilePath: string | null = null;
+        let overlayWriteError: string | null = null;
+        if (writeCeoOverlay) {
+          const overlayDir = path.join(absoluteRepoPath, ".paperclip", "ceo");
+          overlayFilePath = path.join(overlayDir, "AGENTS.md");
+          try {
+            await fs.mkdir(overlayDir, { recursive: true });
+            const reviewerLine = hireReviewer
+              ? "- **Reviewers**: `paperclipHireWithProfile({ profile: \"reviewer\" })` → claude_local + claude-opus-4-7 + effort=high. Multiple reviewers are load-balanced automatically (#80)."
+              : "- **Reviewers**: disabled at bootstrap (`hireReviewer: false`). Auto-review stages have no participant until you hire one manually.";
+            const overlayMd = [
+              `# Project-specific CEO instructions — ${name}`,
+              "",
+              "This overlay augments the default CEO instructions for this repo.",
+              "It was written by `paperclipBootstrapApp` on",
+              `${new Date().toISOString()}. It is markdown, git-tracked, and`,
+              "safe to edit. If it drifts, re-run `paperclipBootstrapApp` against",
+              "this repo — the bootstrap is idempotent and only overwrites files",
+              "it owns.",
+              "",
+              "## Hiring standard",
+              "",
+              `- **Engineering specialists**: \`paperclipHireWithProfile({ profile: "${defaultHiringProfile}" })\`.`,
+              `  This maps to adapter=${defaultHireAdapter}, model+effort per the profile registry.`,
+              "  Never hand-roll adapterType/model/effort — the profile registry is the source of truth.",
+              reviewerLine,
+              "",
+              "## Review defaults",
+              "",
+              `- \`autoReviewEnabled\`: \`${autoReviewEnabled}\``,
+              "- New issues auto-attach a review stage using the company's `defaultReviewerAgentId`.",
+              "- When the review queue depth on any reviewer reaches 3+, hire another reviewer via the profile above.",
+              "",
+              "## Diagnostics the CEO should call every heartbeat",
+              "",
+              "- `paperclipDiagnoseCoverage` — find `area:*` labels with no specialist. Hire for any gap ≥3 issues.",
+              "- `paperclipDiagnoseBottlenecks` — find overloaded reviewers, stuck-in-review issues, overloaded engineers.",
+              "",
+            ].join("\n");
+            await fs.writeFile(overlayFilePath, overlayMd, "utf8");
+          } catch (err) {
+            overlayWriteError = err instanceof Error ? err.message : String(err);
+          }
+        }
+
         // 5. Optionally persist a .paperclip/project.yaml so future MCP
         //    sessions started inside the repo pick the IDs up automatically.
         let configFilePath: string | null = null;
@@ -1464,7 +1521,7 @@ Call this every heartbeat. Act on results:
               ? (reviewer.id as string)
               : null;
 
-        const warnings = configWriteError || reviewerConfigError || goalError;
+        const warnings = configWriteError || reviewerConfigError || goalError || overlayWriteError;
 
         return {
           status: warnings ? "created_with_warnings" : "created",
@@ -1515,6 +1572,13 @@ Call this every heartbeat. Act on results:
                 path: configFilePath,
                 written: !configWriteError,
                 error: configWriteError,
+              }
+            : null,
+          ceoOverlay: overlayFilePath
+            ? {
+                path: overlayFilePath,
+                written: !overlayWriteError,
+                error: overlayWriteError,
               }
             : null,
           nextSteps: [
