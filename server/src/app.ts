@@ -38,6 +38,7 @@ import { mcpManifestRoutes } from "./routes/mcp-manifest.js";
 import { authRoutes } from "./routes/auth.js";
 import { assetRoutes } from "./routes/assets.js";
 import { accessRoutes } from "./routes/access.js";
+import { meRoutes } from "./routes/me.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { adapterRoutes } from "./routes/adapters.js";
 import { pluginUiStaticRoutes } from "./routes/plugin-ui-static.js";
@@ -185,6 +186,7 @@ export async function createApp(
   api.use("/companies", companyCoverageRoutes(db));
   api.use(companySkillRoutes(db));
   api.use(agentRoutes(db));
+  api.use(meRoutes(db));
   api.use(assetRoutes(db, opts.storageService));
   api.use(projectRoutes(db));
   api.use(githubBridgeRoutes(db));

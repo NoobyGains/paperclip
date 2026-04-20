@@ -139,6 +139,30 @@ describe("paperclip MCP tools", () => {
     });
   });
 
+  it("paperclipMe calls /me and surfaces kind field", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockJsonResponse({
+        kind: "board",
+        userId: "user-1",
+        userName: "Alice",
+        userEmail: "alice@example.com",
+        isInstanceAdmin: false,
+        companyIds: ["company-1"],
+        source: "board_key",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipMe");
+    const response = await tool.execute({});
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(String(url)).toBe("http://localhost:3100/api/me");
+    expect(response.content[0]?.text).toContain("\"kind\"");
+    expect(response.content[0]?.text).toContain("\"board\"");
+  });
+
   it("rejects invalid generic request paths", async () => {
     vi.stubGlobal("fetch", vi.fn());
 
