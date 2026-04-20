@@ -411,11 +411,20 @@ describe("paperclip MCP tools", () => {
       if (method === "POST" && u.includes("/api/companies/c-1/agents")) {
         return mockJsonResponse({ id: "ceo-1", name: "CEO", adapterType: "claude_local" });
       }
+      if (method === "POST" && u.includes("/api/project-archetype/detect")) {
+        return mockJsonResponse({ stack: "unknown" });
+      }
       if (method === "POST" && u.includes("/api/companies/c-1/agent-hires")) {
         return mockJsonResponse({ id: "reviewer-1", agentId: "reviewer-1" });
       }
       if (method === "POST" && u.includes("/api/companies/c-1/projects")) {
         return mockJsonResponse({ id: "proj-1", name: "My App", workspace: {} });
+      }
+      if (method === "POST" && u.includes("/api/companies/c-1/goals")) {
+        return mockJsonResponse({ id: "goal-1", title: "Ship My App", level: "company", status: "active" });
+      }
+      if (method === "PATCH" && u.includes("/api/projects/proj-1")) {
+        return mockJsonResponse({ id: "proj-1", goalId: "goal-1" });
       }
       throw new Error(`Unmocked ${method} ${u}`);
     });
@@ -440,34 +449,38 @@ describe("paperclip MCP tools", () => {
     expect(payload.reviewer).toMatchObject({ hired: true, agentId: "reviewer-1", error: null });
     expect(payload.project.id).toBe("proj-1");
 
-    // Ordering: company → patch defaults → CEO → reviewer hire → patch reviewer → project
-    expect(calls[0]?.method).toBe("POST");
-    expect(calls[0]?.url).toContain("/api/companies");
-    expect(calls[1]?.method).toBe("PATCH");
-    expect(calls[1]?.body).toMatchObject({
+    // Spot-check the key calls by URL rather than strict index order
+    // (shaped-team detection + goal creation add intermediate calls).
+    const createCompanyCall = calls.find((c) => c.method === "POST" && c.url.endsWith("/api/companies"));
+    expect(createCompanyCall).toBeDefined();
+
+    const patchDefaultsCall = calls.find((c) => c.method === "PATCH" && c.url.includes("/api/companies/c-1") && !c.url.includes("/agents"));
+    expect(patchDefaultsCall?.body).toMatchObject({
       autoHireEnabled: true,
       requireBoardApprovalForNewAgents: false,
       defaultHireAdapter: "codex_local",
       autoReviewEnabled: true,
     });
-    expect(calls[2]?.url).toContain("/api/companies/c-1/agents");
-    expect((calls[2]?.body as { capabilities?: string })?.capabilities).toContain("coding-heavy");
-    expect(calls[3]?.url).toContain("/api/companies/c-1/agent-hires");
-    expect(calls[3]?.body).toMatchObject({
-      role: "qa",
-      adapterType: "claude_local",
-    });
-    expect(calls[4]?.method).toBe("PATCH");
-    expect(calls[4]?.body).toMatchObject({ defaultReviewerAgentId: "reviewer-1" });
-    expect(calls[5]?.url).toContain("/api/companies/c-1/projects");
+
+    const createCeoCall = calls.find((c) => c.url.includes("/api/companies/c-1/agents"));
+    expect(createCeoCall).toBeDefined();
+    expect((createCeoCall?.body as { capabilities?: string })?.capabilities).toContain("coding-heavy");
+
+    const reviewerHireCall = calls.find((c) => c.url.includes("/api/companies/c-1/agent-hires") && (c.body as Record<string, unknown>)?.role === "qa");
+    expect(reviewerHireCall).toBeDefined();
+    expect((reviewerHireCall?.body as Record<string, unknown>)?.adapterType).toBe("claude_local");
+
+    const createProjectCall = calls.find((c) => c.url.includes("/api/companies/c-1/projects"));
+    expect(createProjectCall).toBeDefined();
   });
 
   it("paperclipBootstrapApp skips reviewer hire when hireReviewer=false", async () => {
-    const calls: Array<{ method: string; url: string }> = [];
+    const calls: Array<{ method: string; url: string; body: unknown }> = [];
     const fetchMock = vi.fn().mockImplementation(async (url: URL | string, init?: RequestInit) => {
       const u = String(url);
       const method = init?.method ?? "GET";
-      calls.push({ method, url: u });
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      calls.push({ method, url: u, body });
 
       if (method === "POST" && u.endsWith("/api/companies")) {
         return mockJsonResponse({ id: "c-2", name: "No-Review App workspace" });
@@ -483,8 +496,20 @@ describe("paperclip MCP tools", () => {
       if (method === "POST" && u.includes("/api/companies/c-2/agents")) {
         return mockJsonResponse({ id: "ceo-2", name: "CEO", adapterType: "claude_local" });
       }
+      if (method === "POST" && u.includes("/api/project-archetype/detect")) {
+        return mockJsonResponse({ stack: "unknown" });
+      }
+      if (method === "POST" && u.includes("/api/companies/c-2/agent-hires")) {
+        return mockJsonResponse({ id: "eng-2", agentId: "eng-2" });
+      }
       if (method === "POST" && u.includes("/api/companies/c-2/projects")) {
         return mockJsonResponse({ id: "proj-2", name: "No-Review App", workspace: {} });
+      }
+      if (method === "POST" && u.includes("/api/companies/c-2/goals")) {
+        return mockJsonResponse({ id: "goal-2", title: "Ship No-Review App" });
+      }
+      if (method === "PATCH" && u.includes("/api/projects/proj-2")) {
+        return mockJsonResponse({ id: "proj-2", goalId: "goal-2" });
       }
       throw new Error(`Unmocked ${method} ${u}`);
     });
@@ -502,8 +527,12 @@ describe("paperclip MCP tools", () => {
     expect(payload.status).toBe("created");
     expect(payload.reviewer).toBeNull();
     expect(payload.company.defaultReviewerAgentId).toBeNull();
-    // No /agent-hires call should have been made.
-    expect(calls.some((c) => c.url.includes("/agent-hires"))).toBe(false);
+    // Reviewer-specific hire (role="qa") must not have been called.
+    // Shaped-team hires may still post to /agent-hires for non-reviewer slots.
+    const reviewerHire = calls.find(
+      (c) => c.url.includes("/agent-hires") && (c.body as Record<string, unknown>)?.role === "qa",
+    );
+    expect(reviewerHire).toBeUndefined();
   });
 
   it("paperclipBootstrapApp reports reviewer-hire failure as a warning without aborting", async () => {
@@ -525,11 +554,20 @@ describe("paperclip MCP tools", () => {
       if (method === "POST" && u.includes("/api/companies/c-3/agents")) {
         return mockJsonResponse({ id: "ceo-3", name: "CEO", adapterType: "claude_local" });
       }
+      if (method === "POST" && u.includes("/api/project-archetype/detect")) {
+        return mockJsonResponse({ stack: "unknown" });
+      }
       if (method === "POST" && u.includes("/api/companies/c-3/agent-hires")) {
         return mockJsonResponse({ error: "subscription gate rejected" }, 403);
       }
       if (method === "POST" && u.includes("/api/companies/c-3/projects")) {
         return mockJsonResponse({ id: "proj-3", name: "Flaky-Reviewer App", workspace: {} });
+      }
+      if (method === "POST" && u.includes("/api/companies/c-3/goals")) {
+        return mockJsonResponse({ id: "goal-3", title: "Ship Flaky-Reviewer App" });
+      }
+      if (method === "PATCH" && u.includes("/api/projects/proj-3")) {
+        return mockJsonResponse({ id: "proj-3", goalId: "goal-3" });
       }
       throw new Error(`Unmocked ${method} ${u}`);
     });
@@ -549,6 +587,244 @@ describe("paperclip MCP tools", () => {
     expect(payload.project.id).toBe("proj-3");
     const warningStep = payload.nextSteps.find((s: string) => s.includes("Reviewer bootstrap failed"));
     expect(warningStep).toBeTruthy();
+  });
+
+  describe("paperclipBootstrapApp — Goal creation (issue #57)", () => {
+    function makeBootstrapFetchMock(companyId: string, opts: { failGoal?: boolean } = {}) {
+      const calls: Array<{ method: string; url: string; body: unknown }> = [];
+      const mock = vi.fn().mockImplementation(async (url: URL | string, init?: RequestInit) => {
+        const u = String(url);
+        const method = init?.method ?? "GET";
+        const body = init?.body ? JSON.parse(String(init.body)) : null;
+        calls.push({ method, url: u, body });
+
+        if (method === "POST" && u.endsWith("/api/companies")) {
+          return mockJsonResponse({ id: companyId, name: "Test App workspace" });
+        }
+        if (method === "PATCH" && u.includes(`/api/companies/${companyId}`)) {
+          return mockJsonResponse({ id: companyId, name: "Test App workspace", autoHireEnabled: true, requireBoardApprovalForNewAgents: false, defaultHireAdapter: "codex_local", autoReviewEnabled: true });
+        }
+        if (method === "POST" && u.includes(`/api/companies/${companyId}/agents`)) {
+          return mockJsonResponse({ id: "ceo-x", name: "CEO", adapterType: "claude_local" });
+        }
+        if (method === "POST" && u.includes(`/api/companies/${companyId}/agent-hires`)) {
+          return mockJsonResponse({ id: "rev-x", agentId: "rev-x" });
+        }
+        // Archetype detection
+        if (method === "POST" && u.includes("/api/project-archetype/detect")) {
+          return mockJsonResponse({ stack: "unknown" });
+        }
+        if (method === "POST" && u.includes(`/api/companies/${companyId}/projects`)) {
+          return mockJsonResponse({ id: "proj-x", name: "Test App", workspace: {} });
+        }
+        if (method === "POST" && u.includes(`/api/companies/${companyId}/goals`)) {
+          if (opts.failGoal) {
+            return mockJsonResponse({ error: "validation failed" }, 422);
+          }
+          return mockJsonResponse({ id: "goal-x", title: "Ship Test App", level: "company", status: "active" });
+        }
+        if (method === "PATCH" && u.includes("/api/projects/proj-x")) {
+          return mockJsonResponse({ id: "proj-x", goalId: "goal-x" });
+        }
+        throw new Error(`Unmocked ${method} ${u}`);
+      });
+      return { mock, calls };
+    }
+
+    it("default flow creates a goal with title 'Ship <name>' and links it to the project", async () => {
+      const { mock, calls } = makeBootstrapFetchMock("c-goal-1");
+      vi.stubGlobal("fetch", mock);
+
+      const tool = getTool("paperclipBootstrapApp");
+      const response = await tool.execute({
+        name: "Test App",
+        repoPath: "/tmp/test-app",
+        writeProjectConfig: false,
+        hireShapedTeam: false,
+      });
+
+      const payload = JSON.parse(response.content[0]!.text);
+      expect(payload.status).toBe("created");
+      expect(payload.goal).toMatchObject({ created: true, id: "goal-x" });
+
+      // Verify POST /companies/:id/goals was called with correct body
+      const goalCall = calls.find((c) => c.url.includes("/goals") && c.method === "POST");
+      expect(goalCall).toBeDefined();
+      expect((goalCall!.body as Record<string, unknown>).title).toBe("Ship Test App");
+      expect((goalCall!.body as Record<string, unknown>).level).toBe("company");
+      expect((goalCall!.body as Record<string, unknown>).status).toBe("active");
+      expect((goalCall!.body as Record<string, unknown>).ownerAgentId).toBe("ceo-x");
+
+      // Verify PATCH /projects/:id was called with goalId
+      const patchProjectCall = calls.find((c) => c.url.includes("/api/projects/proj-x") && c.method === "PATCH");
+      expect(patchProjectCall).toBeDefined();
+      expect((patchProjectCall!.body as Record<string, unknown>).goalId).toBe("goal-x");
+    });
+
+    it("uses custom goalTitle when provided", async () => {
+      const { mock, calls } = makeBootstrapFetchMock("c-goal-2");
+      vi.stubGlobal("fetch", mock);
+
+      const tool = getTool("paperclipBootstrapApp");
+      await tool.execute({
+        name: "Test App",
+        repoPath: "/tmp/test-app",
+        writeProjectConfig: false,
+        hireShapedTeam: false,
+        goalTitle: "Launch v2.0 by Q3",
+      });
+
+      const goalCall = calls.find((c) => c.url.includes("/goals") && c.method === "POST");
+      expect(goalCall).toBeDefined();
+      expect((goalCall!.body as Record<string, unknown>).title).toBe("Launch v2.0 by Q3");
+    });
+
+    it("createGoal=false skips goal creation entirely", async () => {
+      const { mock, calls } = makeBootstrapFetchMock("c-goal-3");
+      vi.stubGlobal("fetch", mock);
+
+      const tool = getTool("paperclipBootstrapApp");
+      const response = await tool.execute({
+        name: "Test App",
+        repoPath: "/tmp/test-app",
+        writeProjectConfig: false,
+        hireShapedTeam: false,
+        createGoal: false,
+      });
+
+      const payload = JSON.parse(response.content[0]!.text);
+      expect(payload.goal).toBeNull();
+      const goalCall = calls.find((c) => c.url.includes("/goals") && c.method === "POST");
+      expect(goalCall).toBeUndefined();
+    });
+
+    it("goal creation failure is a warning — project still created", async () => {
+      const { mock } = makeBootstrapFetchMock("c-goal-4", { failGoal: true });
+      vi.stubGlobal("fetch", mock);
+
+      const tool = getTool("paperclipBootstrapApp");
+      const response = await tool.execute({
+        name: "Test App",
+        repoPath: "/tmp/test-app",
+        writeProjectConfig: false,
+        hireShapedTeam: false,
+      });
+
+      const payload = JSON.parse(response.content[0]!.text);
+      expect(payload.status).toBe("created_with_warnings");
+      expect(payload.goal.created).toBe(false);
+      expect(payload.goal.error).toBeTruthy();
+      expect(payload.project.id).toBe("proj-x");
+    });
+  });
+
+  describe("paperclipBootstrapApp — shaped team hire (issue #57)", () => {
+    function makeBootstrapWithShapedTeamMock(companyId: string, opts: { archetypeStack?: string; failSlot?: boolean } = {}) {
+      const calls: Array<{ method: string; url: string; body: unknown }> = [];
+      const mock = vi.fn().mockImplementation(async (url: URL | string, init?: RequestInit) => {
+        const u = String(url);
+        const method = init?.method ?? "GET";
+        const body = init?.body ? JSON.parse(String(init.body)) : null;
+        calls.push({ method, url: u, body });
+
+        if (method === "POST" && u.endsWith("/api/companies")) {
+          return mockJsonResponse({ id: companyId, name: "Shaped App workspace" });
+        }
+        if (method === "PATCH" && u.includes(`/api/companies/${companyId}`)) {
+          return mockJsonResponse({ id: companyId, name: "Shaped App workspace", autoHireEnabled: true, requireBoardApprovalForNewAgents: false });
+        }
+        if (method === "POST" && u.includes(`/api/companies/${companyId}/agents`)) {
+          return mockJsonResponse({ id: "ceo-s", name: "CEO", adapterType: "claude_local" });
+        }
+        if (method === "POST" && u.includes("/api/project-archetype/detect")) {
+          return mockJsonResponse({ stack: opts.archetypeStack ?? "unknown" });
+        }
+        if (method === "POST" && u.includes(`/api/companies/${companyId}/agent-hires`)) {
+          const b = body as Record<string, unknown>;
+          if (opts.failSlot && b.role !== "qa") {
+            return mockJsonResponse({ error: "hire rejected" }, 422);
+          }
+          return mockJsonResponse({ id: `hire-${b.role as string}`, agentId: `hire-${b.role as string}` });
+        }
+        if (method === "POST" && u.includes(`/api/companies/${companyId}/projects`)) {
+          return mockJsonResponse({ id: "proj-s", name: "Shaped App", workspace: {} });
+        }
+        if (method === "POST" && u.includes(`/api/companies/${companyId}/goals`)) {
+          return mockJsonResponse({ id: "goal-s", title: "Ship Shaped App" });
+        }
+        if (method === "PATCH" && u.includes("/api/projects/proj-s")) {
+          return mockJsonResponse({ id: "proj-s" });
+        }
+        throw new Error(`Unmocked ${method} ${u}`);
+      });
+      return { mock, calls };
+    }
+
+    it("default flow detects archetype and hires shaped team slots (skips reviewer)", async () => {
+      const { mock, calls } = makeBootstrapWithShapedTeamMock("c-shape-1", { archetypeStack: "unknown" });
+      vi.stubGlobal("fetch", mock);
+
+      const tool = getTool("paperclipBootstrapApp");
+      const response = await tool.execute({
+        name: "Shaped App",
+        repoPath: "/tmp/shaped-app",
+        writeProjectConfig: false,
+        hireReviewer: true,
+      });
+
+      const payload = JSON.parse(response.content[0]!.text);
+      expect(payload.shapedTeam).toBeDefined();
+      expect(payload.shapedTeam.archetype).toBe("unknown");
+      // unknown archetype has 2 roles (engineer + reviewer); reviewer is skipped, so 1 hire
+      const hires = payload.shapedTeam.hires as Array<{ role: string; status: string }>;
+      const reviewerInShapedHires = hires.find((h) => h.role === "reviewer");
+      expect(reviewerInShapedHires).toBeUndefined(); // reviewer slot is skipped
+
+      // Archetype detection call should be present
+      const detectCall = calls.find((c) => c.url.includes("/project-archetype/detect") && c.method === "POST");
+      expect(detectCall).toBeDefined();
+      expect((detectCall!.body as Record<string, unknown>).repoPath).toBeTruthy();
+    });
+
+    it("hireShapedTeam=false skips archetype detection and team hiring", async () => {
+      const { mock, calls } = makeBootstrapWithShapedTeamMock("c-shape-2");
+      vi.stubGlobal("fetch", mock);
+
+      const tool = getTool("paperclipBootstrapApp");
+      const response = await tool.execute({
+        name: "Shaped App",
+        repoPath: "/tmp/shaped-app",
+        writeProjectConfig: false,
+        hireShapedTeam: false,
+        hireReviewer: false,
+      });
+
+      const payload = JSON.parse(response.content[0]!.text);
+      expect(payload.shapedTeam).toBeNull();
+      const detectCall = calls.find((c) => c.url.includes("/project-archetype/detect"));
+      expect(detectCall).toBeUndefined();
+    });
+
+    it("partial shaped-team hire failure is non-fatal and reported per slot", async () => {
+      const { mock } = makeBootstrapWithShapedTeamMock("c-shape-3", { archetypeStack: "unknown", failSlot: true });
+      vi.stubGlobal("fetch", mock);
+
+      const tool = getTool("paperclipBootstrapApp");
+      const response = await tool.execute({
+        name: "Shaped App",
+        repoPath: "/tmp/shaped-app",
+        writeProjectConfig: false,
+        hireReviewer: false,
+      });
+
+      const payload = JSON.parse(response.content[0]!.text);
+      // Project should still be created despite slot failure
+      expect(payload.project.id).toBe("proj-s");
+      // shapedTeam should report the failure
+      const hires = payload.shapedTeam.hires as Array<{ status: string }>;
+      const failed = hires.filter((h) => h.status === "failed");
+      expect(failed.length).toBeGreaterThanOrEqual(1);
+    });
   });
 
   describe("operator profile tools (F1)", () => {

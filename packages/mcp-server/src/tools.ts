@@ -267,6 +267,26 @@ const bootstrapAppSchema = z.object({
     .describe(
       "Default hiring profile the CEO should use when spinning up engineering specialists.",
     ),
+  createGoal: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe(
+      "When true (default), create a company-level Goal and link it to the project. Set to false to skip goal creation.",
+    ),
+  goalTitle: z
+    .string()
+    .optional()
+    .describe(
+      "Title for the auto-created Goal. Defaults to 'Ship <name>' when omitted.",
+    ),
+  hireShapedTeam: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe(
+      "When true (default), detect the repo archetype and pre-hire the matching team shape (CTO + engineers + QA) after the CEO and reviewer. Set to false to skip shaped-team hiring.",
+    ),
 });
 
 
@@ -432,7 +452,7 @@ export function buildHireWithProfileDescription(profile: OperatorProfile | null)
  */
 export function buildBootstrapAppDescription(profile: OperatorProfile | null): string {
   const base =
-    "One-call app onboarding. Creates a new company, turns on auto-hire (so the CEO can hire specialists without approval), directly hires a CEO agent on the chosen adapter, hires a Claude reviewer and sets it as the company's defaultReviewerAgentId, configures defaultHireAdapter + autoReviewEnabled so every new issue gets an automatic review stage, creates a project pointing at repoPath, and optionally writes a .paperclip/project.yaml inside the repo so future sessions pick up the IDs. Defaults implement the codex-workers + claude-review pattern: defaultHireAdapter=codex_local, autoReviewEnabled=true, hireReviewer=true, defaultHiringProfile=coding-heavy. Set hireReviewer=false for air-gapped or custom setups. Requires a board-level API key.";
+    "One-call app onboarding. Creates a new company, turns on auto-hire (so the CEO can hire specialists without approval), directly hires a CEO agent on the chosen adapter, hires a Claude reviewer and sets it as the company's defaultReviewerAgentId, configures defaultHireAdapter + autoReviewEnabled so every new issue gets an automatic review stage, creates a project pointing at repoPath, creates a company-level Goal ('Ship <name>' by default) and links it to the project, detects the repo archetype and pre-hires the matching shaped team (CTO + engineers + QA), and optionally writes a .paperclip/project.yaml inside the repo so future sessions pick up the IDs. Defaults implement the codex-workers + claude-review pattern: defaultHireAdapter=codex_local, autoReviewEnabled=true, hireReviewer=true, createGoal=true, hireShapedTeam=true, defaultHiringProfile=coding-heavy. Set hireReviewer=false for air-gapped or custom setups. Requires a board-level API key.";
 
   if (!profile) return base;
 
@@ -1159,6 +1179,9 @@ export function createToolDefinitions(
         autoReviewEnabled,
         hireReviewer,
         defaultHiringProfile,
+        createGoal,
+        goalTitle,
+        hireShapedTeam,
       }) => {
         const trimmedRepoPath = repoPath.trim();
         const absoluteRepoPath = path.isAbsolute(trimmedRepoPath)
@@ -1270,6 +1293,58 @@ export function createToolDefinitions(
           }
         }
 
+        // 3c. Optionally pre-hire the shaped team for this repo's archetype.
+        //     Detects archetype via the server's /project-archetype/detect endpoint,
+        //     looks up the matching team shape, then hires each non-reviewer slot.
+        const shapedTeamHires: Array<{ role: string; name: string | null; status: "hired" | "failed"; error?: string }> = [];
+        let shapedTeamArchetype: string | null = null;
+        if (hireShapedTeam) {
+          try {
+            const archetypeRaw = await client.requestJson<Record<string, unknown>>(
+              "POST",
+              "/project-archetype/detect",
+              { body: { repoPath: absoluteRepoPath } },
+            );
+            shapedTeamArchetype = typeof archetypeRaw.stack === "string" ? archetypeRaw.stack : "unknown";
+            const teamShape = getTeamShape(shapedTeamArchetype as Parameters<typeof getTeamShape>[0]);
+            for (const slot of teamShape.roles) {
+              if (slot.role === "reviewer") continue; // already hired above
+              const adapterTypeForSlot = slot.profile.startsWith("coding") ? "codex_local" : "claude_local";
+              const agentName = slot.name ?? slot.role.charAt(0).toUpperCase() + slot.role.slice(1);
+              try {
+                await client.requestJson<Record<string, unknown>>(
+                  "POST",
+                  `/companies/${companyId}/agent-hires`,
+                  {
+                    body: {
+                      name: agentName,
+                      role: slot.role,
+                      adapterType: adapterTypeForSlot,
+                      adapterConfig: { cwd: absoluteRepoPath },
+                      runtimeConfig: {
+                        heartbeat: { enabled: false, wakeOnDemand: true },
+                      },
+                      permissions: { canCreateAgents: false },
+                      capabilities: `${agentName} — hired from team shape for ${shapedTeamArchetype} archetype.`,
+                    },
+                  },
+                );
+                shapedTeamHires.push({ role: slot.role, name: agentName, status: "hired" });
+              } catch (slotError) {
+                shapedTeamHires.push({
+                  role: slot.role,
+                  name: agentName,
+                  status: "failed",
+                  error: slotError instanceof Error ? slotError.message : String(slotError),
+                });
+              }
+            }
+          } catch (shapeError) {
+            // Non-fatal — archetype detection failure doesn't abort bootstrap.
+            shapedTeamArchetype = null;
+          }
+        }
+
         // 4. Create the project pointing at the repo so issues can land.
         const project = await client.requestJson<Record<string, unknown>>(
           "POST",
@@ -1286,6 +1361,37 @@ export function createToolDefinitions(
             },
           },
         );
+
+        // 4b. Optionally create a company-level Goal and link it to the project.
+        let goal: Record<string, unknown> | null = null;
+        let goalError: string | null = null;
+        if (createGoal) {
+          try {
+            const resolvedGoalTitle = goalTitle ?? `Ship ${name}`;
+            const ceoId = typeof ceo.id === "string" ? ceo.id : String(ceo.id);
+            goal = await client.requestJson<Record<string, unknown>>(
+              "POST",
+              `/companies/${companyId}/goals`,
+              {
+                body: {
+                  title: resolvedGoalTitle,
+                  level: "company",
+                  status: "active",
+                  ownerAgentId: ceoId,
+                },
+              },
+            );
+            const goalId = typeof goal.id === "string" ? goal.id : String(goal.id);
+            await client.requestJson<Record<string, unknown>>(
+              "PATCH",
+              `/projects/${String(project.id)}`,
+              { body: { goalId } },
+            );
+          } catch (err) {
+            goalError = err instanceof Error ? err.message : String(err);
+            goal = null;
+          }
+        }
 
         // 5. Optionally persist a .paperclip/project.yaml so future MCP
         //    sessions started inside the repo pick the IDs up automatically.
@@ -1319,7 +1425,7 @@ export function createToolDefinitions(
               ? (reviewer.id as string)
               : null;
 
-        const warnings = configWriteError || reviewerConfigError;
+        const warnings = configWriteError || reviewerConfigError || goalError;
 
         return {
           status: warnings ? "created_with_warnings" : "created",
@@ -1346,6 +1452,20 @@ export function createToolDefinitions(
                 error: reviewerConfigError,
               }
             : null,
+          goal: createGoal
+            ? {
+                created: goal !== null && goalError === null,
+                id: goal?.id ?? null,
+                title: goal?.title ?? goalTitle ?? `Ship ${name}`,
+                error: goalError,
+              }
+            : null,
+          shapedTeam: hireShapedTeam
+            ? {
+                archetype: shapedTeamArchetype,
+                hires: shapedTeamHires,
+              }
+            : null,
           project: {
             id: project.id,
             name: project.name,
@@ -1367,6 +1487,18 @@ export function createToolDefinitions(
               : hireReviewer
                 ? "Auto-review is on and a Claude reviewer is set as defaultReviewerAgentId — every new issue will get a review stage attached automatically."
                 : "hireReviewer was false — autoReviewEnabled has no reviewer to attach to. Hire one manually or set hireReviewer=true on the next bootstrap.",
+            goalError
+              ? `Goal creation failed: ${goalError}. Create one manually via paperclipApiRequest({ method: "POST", path: "/companies/${companyId}/goals", ... }).`
+              : createGoal && goal
+                ? `Company goal '${String(goal.title)}' created and linked to the project — agents can track progress against it.`
+                : createGoal
+                  ? "createGoal was true but goal creation failed — check goalError in this response."
+                  : "createGoal was false — create a Goal manually if you want agents to track company objectives.",
+            hireShapedTeam && shapedTeamArchetype
+              ? `Shaped team hired for ${shapedTeamArchetype} archetype: ${shapedTeamHires.filter((h) => h.status === "hired").length} agents hired, ${shapedTeamHires.filter((h) => h.status === "failed").length} failed.`
+              : hireShapedTeam
+                ? "Shaped-team archetype detection failed — team was not pre-hired. Run paperclipDetectProjectArchetype then paperclipHireWithProfile manually."
+                : "hireShapedTeam was false — hire a shaped team manually via paperclipGetTeamShape + paperclipHireWithProfile.",
             "Create your first issue with paperclipCreateIssue. The CEO will triage and auto-hire specialists as needed.",
             "Check progress at any time with paperclipDiagnoseCompany.",
           ],
