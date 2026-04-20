@@ -222,11 +222,51 @@ const diagnoseCompanySchema = z.object({
   approvalAgeWarnHours: z.number().int().min(1).max(720).optional().default(24),
 });
 
+const HIRING_PROFILE_IDS = [
+  "coding-heavy",
+  "coding-standard",
+  "coding-light",
+  "reasoning-heavy",
+  "reasoning-standard",
+  "reviewer",
+  "research",
+] as const;
+
 const bootstrapAppSchema = z.object({
   name: z.string().min(1).max(120),
   repoPath: z.string().min(1).max(1024),
   ceoAdapterType: z.string().min(1).max(64).optional().default("claude_local"),
   writeProjectConfig: z.boolean().optional().default(true),
+  defaultHireAdapter: z
+    .string()
+    .min(1)
+    .max(64)
+    .optional()
+    .default("codex_local")
+    .describe(
+      "Adapter new specialists use by default when the CEO hires them. Defaults to codex_local (codex-workers + claude-review pattern).",
+    ),
+  autoReviewEnabled: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe(
+      "When true, every new issue automatically attaches a review stage using the company's defaultReviewerAgentId.",
+    ),
+  hireReviewer: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe(
+      "When true, hire a Claude reviewer agent during bootstrap and set it as the company's defaultReviewerAgentId. Needed for autoReviewEnabled to have anything to attach to.",
+    ),
+  defaultHiringProfile: z
+    .enum(HIRING_PROFILE_IDS)
+    .optional()
+    .default("coding-heavy")
+    .describe(
+      "Default hiring profile the CEO should use when spinning up engineering specialists.",
+    ),
 });
 
 
@@ -392,7 +432,7 @@ export function buildHireWithProfileDescription(profile: OperatorProfile | null)
  */
 export function buildBootstrapAppDescription(profile: OperatorProfile | null): string {
   const base =
-    "One-call app onboarding. Creates a new company, turns on auto-hire (so the CEO can hire specialists without approval), directly hires a CEO agent on the chosen adapter, creates a project pointing at repoPath, and optionally writes a .paperclip/project.yaml inside the repo so future sessions pick up the IDs. Requires a board-level API key.";
+    "One-call app onboarding. Creates a new company, turns on auto-hire (so the CEO can hire specialists without approval), directly hires a CEO agent on the chosen adapter, hires a Claude reviewer and sets it as the company's defaultReviewerAgentId, configures defaultHireAdapter + autoReviewEnabled so every new issue gets an automatic review stage, creates a project pointing at repoPath, and optionally writes a .paperclip/project.yaml inside the repo so future sessions pick up the IDs. Defaults implement the codex-workers + claude-review pattern: defaultHireAdapter=codex_local, autoReviewEnabled=true, hireReviewer=true, defaultHiringProfile=coding-heavy. Set hireReviewer=false for air-gapped or custom setups. Requires a board-level API key.";
 
   if (!profile) return base;
 
@@ -1110,7 +1150,16 @@ export function createToolDefinitions(
       "paperclipBootstrapApp",
       buildBootstrapAppDescription(profile),
       bootstrapAppSchema,
-      async ({ name, repoPath, ceoAdapterType, writeProjectConfig }) => {
+      async ({
+        name,
+        repoPath,
+        ceoAdapterType,
+        writeProjectConfig,
+        defaultHireAdapter,
+        autoReviewEnabled,
+        hireReviewer,
+        defaultHiringProfile,
+      }) => {
         const trimmedRepoPath = repoPath.trim();
         const absoluteRepoPath = path.isAbsolute(trimmedRepoPath)
           ? trimmedRepoPath
@@ -1125,7 +1174,9 @@ export function createToolDefinitions(
         const companyId = String(company.id);
 
         // 2. Turn on auto-hire and disable the board-approval gate so the
-        //    CEO can spawn specialists without manual approval.
+        //    CEO can spawn specialists without manual approval. Set the
+        //    codex-workers + claude-review defaults from #14/#6/#7 so new
+        //    issues automatically get a reviewer and new hires go to Codex.
         const updatedCompany = await client.requestJson<Record<string, unknown>>(
           "PATCH",
           `/companies/${companyId}`,
@@ -1133,12 +1184,20 @@ export function createToolDefinitions(
             body: {
               requireBoardApprovalForNewAgents: false,
               autoHireEnabled: true,
+              defaultHireAdapter,
+              autoReviewEnabled,
             },
           },
         );
 
         // 3. Create the CEO agent directly (bypasses the approval flow via
-        //    the board-only direct-create endpoint).
+        //    the board-only direct-create endpoint). Capabilities surfaces
+        //    the default hiring profile so the CEO knows which profile to
+        //    use when paperclipHireWithProfile is called for specialists.
+        const ceoCapabilities = [
+          "Owns strategy, prioritization, delegation, and hiring for this company.",
+          `Default hiring profile for engineering specialists: ${defaultHiringProfile}. Use paperclipHireWithProfile to hire consistently.`,
+        ].join(" ");
         const ceo = await client.requestJson<Record<string, unknown>>(
           "POST",
           `/companies/${companyId}/agents`,
@@ -1154,11 +1213,59 @@ export function createToolDefinitions(
                 heartbeat: { enabled: false, wakeOnDemand: true },
               },
               permissions: { canCreateAgents: true },
-              capabilities:
-                "Owns strategy, prioritization, delegation, and hiring for this company.",
+              capabilities: ceoCapabilities,
             },
           },
         );
+
+        // 3b. Optionally hire a Claude reviewer and set it as the company's
+        //     defaultReviewerAgentId. Needed for autoReviewEnabled to have
+        //     anything to attach to. Skipped when hireReviewer=false.
+        let reviewer: Record<string, unknown> | null = null;
+        let reviewerConfigError: string | null = null;
+        if (hireReviewer) {
+          try {
+            const reviewerProfile = getHiringProfile("reviewer");
+            if (!reviewerProfile) {
+              throw new Error("reviewer hiring profile is not registered");
+            }
+            reviewer = await client.requestJson<Record<string, unknown>>(
+              "POST",
+              `/companies/${companyId}/agent-hires`,
+              {
+                body: {
+                  name: "Reviewer",
+                  role: "reviewer",
+                  title: "Cross-adapter code reviewer",
+                  icon: "shield-check",
+                  adapterType: reviewerProfile.adapterType,
+                  adapterConfig: reviewerProfile.adapterConfig,
+                  capabilities:
+                    "Reviews work produced by engineering specialists; attached automatically to every issue via autoReviewEnabled.",
+                },
+              },
+            );
+            const reviewerAgentId =
+              typeof reviewer.agentId === "string"
+                ? reviewer.agentId
+                : typeof reviewer.id === "string"
+                  ? (reviewer.id as string)
+                  : null;
+            if (reviewerAgentId) {
+              await client.requestJson<Record<string, unknown>>(
+                "PATCH",
+                `/companies/${companyId}`,
+                { body: { defaultReviewerAgentId: reviewerAgentId } },
+              );
+            } else {
+              reviewerConfigError =
+                "Reviewer hire succeeded but the response had no agent id, so defaultReviewerAgentId was not set.";
+            }
+          } catch (error) {
+            reviewerConfigError =
+              error instanceof Error ? error.message : String(error);
+          }
+        }
 
         // 4. Create the project pointing at the repo so issues can land.
         const project = await client.requestJson<Record<string, unknown>>(
@@ -1202,20 +1309,40 @@ export function createToolDefinitions(
           }
         }
 
+        const reviewerAgentIdForReport =
+          reviewer && typeof reviewer.agentId === "string"
+            ? reviewer.agentId
+            : reviewer && typeof reviewer.id === "string"
+              ? (reviewer.id as string)
+              : null;
+
+        const warnings = configWriteError || reviewerConfigError;
+
         return {
-          status: configWriteError ? "created_with_warnings" : "created",
+          status: warnings ? "created_with_warnings" : "created",
           company: {
             id: companyId,
             name: updatedCompany.name,
             autoHireEnabled: updatedCompany.autoHireEnabled,
             requireBoardApprovalForNewAgents:
               updatedCompany.requireBoardApprovalForNewAgents,
+            defaultHireAdapter,
+            autoReviewEnabled,
+            defaultReviewerAgentId: reviewerAgentIdForReport,
           },
           ceo: {
             id: ceo.id,
             name: ceo.name,
             adapterType: ceo.adapterType,
+            defaultHiringProfile,
           },
+          reviewer: hireReviewer
+            ? {
+                hired: reviewer !== null && reviewerConfigError === null,
+                agentId: reviewerAgentIdForReport,
+                error: reviewerConfigError,
+              }
+            : null,
           project: {
             id: project.id,
             name: project.name,
@@ -1232,6 +1359,11 @@ export function createToolDefinitions(
             configFilePath && !configWriteError
               ? `The repo now contains ${configFilePath}. Future Claude Code sessions opened inside the repo can read it to pick up IDs without env vars.`
               : "Consider writing your own .paperclip/project.yaml to the repo if you want future sessions to bootstrap without explicit IDs.",
+            reviewerConfigError
+              ? `Reviewer bootstrap failed: ${reviewerConfigError}. Hire one manually via paperclipHireWithProfile({ profile: "reviewer" }) and PATCH the company with defaultReviewerAgentId.`
+              : hireReviewer
+                ? "Auto-review is on and a Claude reviewer is set as defaultReviewerAgentId — every new issue will get a review stage attached automatically."
+                : "hireReviewer was false — autoReviewEnabled has no reviewer to attach to. Hire one manually or set hireReviewer=true on the next bootstrap.",
             "Create your first issue with paperclipCreateIssue. The CEO will triage and auto-hire specialists as needed.",
             "Check progress at any time with paperclipDiagnoseCompany.",
           ],
