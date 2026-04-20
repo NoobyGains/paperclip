@@ -387,7 +387,7 @@ describe("paperclip MCP tools", () => {
     expect(body.adapterConfig.modelReasoningEffort).toBe("medium"); // profile preserved
   });
 
-  it("paperclipBootstrapApp chains create-company → patch settings → create CEO → create project", async () => {
+  it("paperclipBootstrapApp chains create-company → patch defaults → CEO → reviewer → patch reviewer → project", async () => {
     const calls: Array<{ method: string; url: string; body: unknown }> = [];
     const fetchMock = vi.fn().mockImplementation(async (url: URL | string, init?: RequestInit) => {
       const u = String(url);
@@ -404,10 +404,15 @@ describe("paperclip MCP tools", () => {
           name: "My App workspace",
           autoHireEnabled: true,
           requireBoardApprovalForNewAgents: false,
+          defaultHireAdapter: "codex_local",
+          autoReviewEnabled: true,
         });
       }
       if (method === "POST" && u.includes("/api/companies/c-1/agents")) {
         return mockJsonResponse({ id: "ceo-1", name: "CEO", adapterType: "claude_local" });
+      }
+      if (method === "POST" && u.includes("/api/companies/c-1/agent-hires")) {
+        return mockJsonResponse({ id: "reviewer-1", agentId: "reviewer-1" });
       }
       if (method === "POST" && u.includes("/api/companies/c-1/projects")) {
         return mockJsonResponse({ id: "proj-1", name: "My App", workspace: {} });
@@ -427,19 +432,123 @@ describe("paperclip MCP tools", () => {
     expect(payload.status).toBe("created");
     expect(payload.company.autoHireEnabled).toBe(true);
     expect(payload.company.requireBoardApprovalForNewAgents).toBe(false);
+    expect(payload.company.defaultHireAdapter).toBe("codex_local");
+    expect(payload.company.autoReviewEnabled).toBe(true);
+    expect(payload.company.defaultReviewerAgentId).toBe("reviewer-1");
     expect(payload.ceo.id).toBe("ceo-1");
+    expect(payload.ceo.defaultHiringProfile).toBe("coding-heavy");
+    expect(payload.reviewer).toMatchObject({ hired: true, agentId: "reviewer-1", error: null });
     expect(payload.project.id).toBe("proj-1");
 
-    // Ordering: company → patch → agent → project
+    // Ordering: company → patch defaults → CEO → reviewer hire → patch reviewer → project
     expect(calls[0]?.method).toBe("POST");
     expect(calls[0]?.url).toContain("/api/companies");
     expect(calls[1]?.method).toBe("PATCH");
     expect(calls[1]?.body).toMatchObject({
       autoHireEnabled: true,
       requireBoardApprovalForNewAgents: false,
+      defaultHireAdapter: "codex_local",
+      autoReviewEnabled: true,
     });
     expect(calls[2]?.url).toContain("/api/companies/c-1/agents");
-    expect(calls[3]?.url).toContain("/api/companies/c-1/projects");
+    expect((calls[2]?.body as { capabilities?: string })?.capabilities).toContain("coding-heavy");
+    expect(calls[3]?.url).toContain("/api/companies/c-1/agent-hires");
+    expect(calls[3]?.body).toMatchObject({
+      role: "reviewer",
+      adapterType: "claude_local",
+    });
+    expect(calls[4]?.method).toBe("PATCH");
+    expect(calls[4]?.body).toMatchObject({ defaultReviewerAgentId: "reviewer-1" });
+    expect(calls[5]?.url).toContain("/api/companies/c-1/projects");
+  });
+
+  it("paperclipBootstrapApp skips reviewer hire when hireReviewer=false", async () => {
+    const calls: Array<{ method: string; url: string }> = [];
+    const fetchMock = vi.fn().mockImplementation(async (url: URL | string, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? "GET";
+      calls.push({ method, url: u });
+
+      if (method === "POST" && u.endsWith("/api/companies")) {
+        return mockJsonResponse({ id: "c-2", name: "No-Review App workspace" });
+      }
+      if (method === "PATCH" && u.includes("/api/companies/c-2")) {
+        return mockJsonResponse({
+          id: "c-2",
+          name: "No-Review App workspace",
+          autoHireEnabled: true,
+          requireBoardApprovalForNewAgents: false,
+        });
+      }
+      if (method === "POST" && u.includes("/api/companies/c-2/agents")) {
+        return mockJsonResponse({ id: "ceo-2", name: "CEO", adapterType: "claude_local" });
+      }
+      if (method === "POST" && u.includes("/api/companies/c-2/projects")) {
+        return mockJsonResponse({ id: "proj-2", name: "No-Review App", workspace: {} });
+      }
+      throw new Error(`Unmocked ${method} ${u}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipBootstrapApp");
+    const response = await tool.execute({
+      name: "No-Review App",
+      repoPath: "/tmp/nonexistent-for-test-2",
+      writeProjectConfig: false,
+      hireReviewer: false,
+    });
+
+    const payload = JSON.parse(response.content[0]!.text);
+    expect(payload.status).toBe("created");
+    expect(payload.reviewer).toBeNull();
+    expect(payload.company.defaultReviewerAgentId).toBeNull();
+    // No /agent-hires call should have been made.
+    expect(calls.some((c) => c.url.includes("/agent-hires"))).toBe(false);
+  });
+
+  it("paperclipBootstrapApp reports reviewer-hire failure as a warning without aborting", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: URL | string, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? "GET";
+
+      if (method === "POST" && u.endsWith("/api/companies")) {
+        return mockJsonResponse({ id: "c-3", name: "Flaky-Reviewer App workspace" });
+      }
+      if (method === "PATCH" && u.includes("/api/companies/c-3")) {
+        return mockJsonResponse({
+          id: "c-3",
+          name: "Flaky-Reviewer App workspace",
+          autoHireEnabled: true,
+          requireBoardApprovalForNewAgents: false,
+        });
+      }
+      if (method === "POST" && u.includes("/api/companies/c-3/agents")) {
+        return mockJsonResponse({ id: "ceo-3", name: "CEO", adapterType: "claude_local" });
+      }
+      if (method === "POST" && u.includes("/api/companies/c-3/agent-hires")) {
+        return mockJsonResponse({ error: "subscription gate rejected" }, 403);
+      }
+      if (method === "POST" && u.includes("/api/companies/c-3/projects")) {
+        return mockJsonResponse({ id: "proj-3", name: "Flaky-Reviewer App", workspace: {} });
+      }
+      throw new Error(`Unmocked ${method} ${u}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipBootstrapApp");
+    const response = await tool.execute({
+      name: "Flaky-Reviewer App",
+      repoPath: "/tmp/nonexistent-for-test-3",
+      writeProjectConfig: false,
+    });
+
+    const payload = JSON.parse(response.content[0]!.text);
+    expect(payload.status).toBe("created_with_warnings");
+    expect(payload.reviewer.hired).toBe(false);
+    expect(payload.reviewer.error).toBeTruthy();
+    expect(payload.project.id).toBe("proj-3");
+    const warningStep = payload.nextSteps.find((s: string) => s.includes("Reviewer bootstrap failed"));
+    expect(warningStep).toBeTruthy();
   });
 
   describe("operator profile tools (F1)", () => {
