@@ -31,6 +31,7 @@ import {
   Rocket,
   Search,
   Shield,
+  ShieldCheck,
   Sparkles,
   Star,
   Swords,
@@ -53,6 +54,7 @@ export const AGENT_ICONS: Record<AgentIconName, LucideIcon> = {
   code: Code,
   terminal: Terminal,
   shield: Shield,
+  "shield-check": ShieldCheck,
   eye: Eye,
   search: Search,
   wrench: Wrench,
@@ -92,7 +94,12 @@ const DEFAULT_ICON: AgentIconName = "bot";
 
 export function getAgentIcon(iconName: string | null | undefined): LucideIcon {
   if (iconName && AGENT_ICON_NAMES.includes(iconName as AgentIconName)) {
-    return AGENT_ICONS[iconName as AgentIconName];
+    // Hardened: even when the enum includes a name, the map may not yet
+    // carry the entry (e.g. if a future enum widening ships without the
+    // corresponding AGENT_ICONS update). Fall back to DEFAULT_ICON instead
+    // of returning undefined, which would crash the whole React tree.
+    const mapped = AGENT_ICONS[iconName as AgentIconName];
+    if (mapped) return mapped;
   }
   return AGENT_ICONS[DEFAULT_ICON];
 }
