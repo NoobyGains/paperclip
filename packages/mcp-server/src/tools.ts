@@ -1097,6 +1097,22 @@ CEO and reviewer agents are excluded from coverage because they do not take spec
       },
     ),
     makeTool(
+      "paperclipDiagnoseBottlenecks",
+      `Bottleneck diagnostic: identify review queue depth, overloaded agents, and issues stuck in review.
+
+Call this every heartbeat. Act on results:
+- reviewQueue entries with pendingIssueCount >= 3 → hire more reviewers via paperclipHireWithProfile
+- overloadedAgents entries → reassign some of their issues to less-loaded agents
+- stuckInReview entries → comment on the issue or escalate to the CEO
+- summary.criticalCount > 0 → immediate action required`,
+      z.object({ companyId: companyIdOptional }),
+      async ({ companyId }) => {
+        const id = companyId ?? client.defaults.companyId;
+        if (!id) throw new Error("companyId is required");
+        return client.requestJson("GET", `/companies/${id}/bottlenecks`);
+      },
+    ),
+    makeTool(
       "paperclipListHiringProfiles",
       "List the CEO hiring profiles (coding-heavy, coding-standard, coding-light, reasoning-heavy, reasoning-standard, reviewer, research). Each entry has the full expanded adapterType + adapterConfig + capabilities. Read this before picking a profile for a hire.",
       z.object({}),
