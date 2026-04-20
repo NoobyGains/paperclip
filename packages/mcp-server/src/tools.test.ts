@@ -299,6 +299,29 @@ describe("paperclip MCP tools", () => {
     expect(response.content[0]?.text).toContain("permission denied");
   });
 
+  it("paperclipDiagnoseBottlenecks hits the correct bottlenecks path with default companyId", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockJsonResponse({
+        reviewQueue: [],
+        overloadedAgents: [],
+        stuckInReview: [],
+        summary: { criticalCount: 0, warnCount: 0 },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipDiagnoseBottlenecks");
+    const response = await tool.execute({});
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(String(url)).toBe(
+      "http://localhost:3100/api/companies/11111111-1111-1111-1111-111111111111/bottlenecks",
+    );
+    const payload = JSON.parse(response.content[0]!.text);
+    expect(payload.summary.criticalCount).toBe(0);
+  });
+
   it("attaches readOnly/destructive/idempotent annotations per tool category", () => {
     // Spot-check that the central annotation map reaches each category.
     const read = getTool("paperclipDiagnoseIssue").annotations;
