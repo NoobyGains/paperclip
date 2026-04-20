@@ -156,4 +156,26 @@ describe("paperclip MCP tools", () => {
 
     expect(response.content[0]?.text).toContain("must not contain '..'");
   });
+
+  it("paperclipDiagnoseBottlenecks hits the correct bottlenecks path with default companyId", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockJsonResponse({
+        reviewQueue: [],
+        overloadedAgents: [],
+        stuckInReview: [],
+        summary: { criticalCount: 0, warnCount: 0 },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipDiagnoseBottlenecks");
+    const response = await tool.execute({});
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(String(url)).toBe(
+      "http://localhost:3100/api/companies/11111111-1111-1111-1111-111111111111/bottlenecks",
+    );
+    expect(response.content[0]?.text).toContain("criticalCount");
+  });
 });

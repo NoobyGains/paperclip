@@ -411,6 +411,22 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
         }),
     ),
     makeTool(
+      "paperclipDiagnoseBottlenecks",
+      `Bottleneck diagnostic: identify review queue depth, overloaded agents, and issues stuck in review.
+
+Call this every heartbeat. Act on results:
+- reviewQueue entries with pendingIssueCount >= 3 → hire more reviewers via paperclipHireWithProfile
+- overloadedAgents entries → reassign some of their issues to less-loaded agents
+- stuckInReview entries → comment on the issue or escalate to the CEO
+- summary.criticalCount > 0 → immediate action required`,
+      z.object({ companyId: companyIdOptional }),
+      async ({ companyId }) => {
+        const id = companyId ?? client.defaults.companyId;
+        if (!id) throw new Error("companyId is required");
+        return client.requestJson("GET", `/companies/${id}/bottlenecks`);
+      },
+    ),
+    makeTool(
       "paperclipApiRequest",
       "Make a JSON request to an existing Paperclip /api endpoint for unsupported operations",
       apiRequestSchema,
