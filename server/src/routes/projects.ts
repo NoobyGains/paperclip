@@ -23,6 +23,7 @@ import {
   startRuntimeServicesForWorkspaceControl,
   stopRuntimeServicesForProjectWorkspace,
 } from "../services/workspace-runtime.js";
+import { githubIssueBridge, detectGitHubRepo } from "../services/github-issue-bridge.js";
 import {
   assertNoAgentHostWorkspaceCommandMutation,
   collectProjectExecutionWorkspaceCommandPaths,
@@ -149,6 +150,48 @@ export function projectRoutes(db: Db) {
     if (telemetryClient) {
       trackProjectCreated(telemetryClient);
     }
+
+    // Auto-sync GitHub issues fire-and-forget after project create
+    const projectForSync = hydratedProject ?? project;
+    const primaryWorkspaceCwd = projectForSync.primaryWorkspace?.cwd ?? null;
+    if (primaryWorkspaceCwd) {
+      void (async () => {
+        try {
+          const ghRepo = await detectGitHubRepo(primaryWorkspaceCwd);
+          if (!ghRepo) return;
+          const bridge = githubIssueBridge(db);
+          const syncActor = { actorId: actor.actorId, agentId: actor.agentId ?? null };
+          const result = await bridge.syncProject(project.id, syncActor);
+          await logActivity(db, {
+            companyId,
+            actorType: "system",
+            actorId: "system",
+            agentId: actor.agentId ?? null,
+            action: "project.github_issue_bridge_auto_synced",
+            entityType: "project",
+            entityId: project.id,
+            details: {
+              imported: result.imported,
+              skippedAlreadyMirrored: result.skippedAlreadyMirrored,
+              createdIssueIds: result.createdIssueIds,
+              warnings: result.warnings,
+            },
+          });
+        } catch (err) {
+          await logActivity(db, {
+            companyId,
+            actorType: "system",
+            actorId: "system",
+            agentId: actor.agentId ?? null,
+            action: "project.github_issue_bridge_auto_sync_failed",
+            entityType: "project",
+            entityId: project.id,
+            details: { error: String(err) },
+          }).catch(() => {});
+        }
+      })();
+    }
+
     res.status(201).json(hydratedProject ?? project);
   });
 

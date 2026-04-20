@@ -86,10 +86,17 @@ export interface ExecutionWorkspaceConfig {
   serviceStates?: WorkspaceRuntimeServiceStateMap | null;
 }
 
+export interface GithubBridgeConfig {
+  enabled: boolean;
+  labelFilter?: string[] | null;
+  agentIdOverride?: string | null;
+}
+
 export interface ProjectWorkspaceRuntimeConfig {
   workspaceRuntime: Record<string, unknown> | null;
   desiredState: WorkspaceRuntimeDesiredState | null;
   serviceStates?: WorkspaceRuntimeServiceStateMap | null;
+  githubBridge?: GithubBridgeConfig | null;
 }
 
 export interface WorkspaceRuntimeControlTarget {

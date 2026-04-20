@@ -423,5 +423,12 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
         });
       },
     ),
+    makeTool(
+      "paperclipSyncProjectGithub",
+      "Sync open GitHub issues from the project's primary workspace remote into Paperclip as tracked issues. Mirrors only open GitHub issues; already-mirrored issues are skipped. Follow-up scheduled re-sync is out of scope for this tool.",
+      z.object({ projectId: z.string().uuid() }),
+      async ({ projectId }) =>
+        client.requestJson("POST", `/projects/${encodeURIComponent(projectId)}/github-issues/sync`, { body: {} }),
+    ),
   ];
 }

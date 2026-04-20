@@ -261,6 +261,7 @@ export type {
   ExecutionWorkspaceCloseLinkedIssue,
   ExecutionWorkspaceCloseReadiness,
   ExecutionWorkspaceCloseReadinessState,
+  GithubBridgeConfig,
   ProjectWorkspaceRuntimeConfig,
   WorkspaceCommandDefinition,
   WorkspaceCommandKind,

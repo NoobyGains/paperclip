@@ -156,4 +156,21 @@ describe("paperclip MCP tools", () => {
 
     expect(response.content[0]?.text).toContain("must not contain '..'");
   });
+
+  it("paperclipSyncProjectGithub POSTs to the right endpoint", async () => {
+    const projectId = "55555555-5555-4555-8555-555555555555";
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockJsonResponse({ imported: 3, skippedAlreadyMirrored: 1, createdIssueIds: ["a", "b", "c"], warnings: [] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = getTool("paperclipSyncProjectGithub");
+    const response = await tool.execute({ projectId });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe(`http://localhost:3100/api/projects/${projectId}/github-issues/sync`);
+    expect(init.method).toBe("POST");
+    expect(response.content[0]?.text).toContain("imported");
+  });
 });
