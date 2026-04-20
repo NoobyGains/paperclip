@@ -454,7 +454,7 @@ describe("paperclip MCP tools", () => {
     expect((calls[2]?.body as { capabilities?: string })?.capabilities).toContain("coding-heavy");
     expect(calls[3]?.url).toContain("/api/companies/c-1/agent-hires");
     expect(calls[3]?.body).toMatchObject({
-      role: "reviewer",
+      role: "qa",
       adapterType: "claude_local",
     });
     expect(calls[4]?.method).toBe("PATCH");

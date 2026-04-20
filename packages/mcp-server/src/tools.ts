@@ -1229,15 +1229,18 @@ export function createToolDefinitions(
             if (!reviewerProfile) {
               throw new Error("reviewer hiring profile is not registered");
             }
+            // NOTE: role="qa" + icon="shield" are the legal values in the
+            // current server enums. Tracking widening to "reviewer" + "shield-check"
+            // in issue #55. When those land this block can be updated.
             reviewer = await client.requestJson<Record<string, unknown>>(
               "POST",
               `/companies/${companyId}/agent-hires`,
               {
                 body: {
                   name: "Reviewer",
-                  role: "reviewer",
+                  role: "qa",
                   title: "Cross-adapter code reviewer",
-                  icon: "shield-check",
+                  icon: "shield",
                   adapterType: reviewerProfile.adapterType,
                   adapterConfig: reviewerProfile.adapterConfig,
                   capabilities:
