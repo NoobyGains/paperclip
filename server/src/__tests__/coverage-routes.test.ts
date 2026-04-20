@@ -2,7 +2,7 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Db } from "@paperclipai/db";
-import { companyCoverageRoutes, parseAreaLabels } from "../routes/company-coverage.js";
+import { companyCoverageRoutes, parseAreaLabels, LABEL_SYNONYMS } from "../routes/company-coverage.js";
 
 // ---------------------------------------------------------------------------
 // Pure-function tests — no DB needed
@@ -24,6 +24,31 @@ describe("parseAreaLabels", () => {
 
   it("ignores non-area label tokens", () => {
     expect(parseAreaLabels("priority:high type:bug")).toEqual([]);
+  });
+
+  // --- synonym tests (#79) ---
+
+  it("recognises 'Microsoft Graph sync pipeline' as covering area:graph-api", () => {
+    const labels = parseAreaLabels("Microsoft Graph sync pipeline for Intune");
+    expect(labels).toContain("area:graph-api");
+  });
+
+  it("does NOT treat unrelated capabilities (e.g. 'React') as covering area:graph-api", () => {
+    const labels = parseAreaLabels("React frontend specialist");
+    expect(labels).not.toContain("area:graph-api");
+  });
+
+  it("exact area:X tokens still work after synonym map was added (regression guard)", () => {
+    expect(parseAreaLabels("area:backend area:database")).toEqual(
+      expect.arrayContaining(["area:backend", "area:database"]),
+    );
+  });
+
+  it("synonym map covers all documented keys", () => {
+    // Ensures the exported map matches the labels mentioned in issue #79.
+    expect(Object.keys(LABEL_SYNONYMS)).toEqual(
+      expect.arrayContaining(["graph-api", "email", "campaigns", "sync", "compliance", "reporting"]),
+    );
   });
 });
 
